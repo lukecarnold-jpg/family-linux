@@ -315,6 +315,7 @@ def test_without_ipv6_route_children_ipv6_is_refused_and_ipv4_dns_still_redirect
     assert "dnat ip6" not in rules
     assert "meta skuid 1002 meta nfproto ipv4 tcp dport { 80, 443 } redirect to :5401" in rules
     assert "meta skuid 1002 drop" in rules
+    assert "set allow4_1002 { type ipv4_addr; flags timeout; }" in rules
 
 
 def test_ipv6_route_detection_reads_default_route(monkeypatch):

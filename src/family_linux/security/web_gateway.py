@@ -127,6 +127,10 @@ def _render_nft_ipv4_only(child_uids: List[Tuple[int, int, int]]) -> str:
         f"add table inet {NFT_TABLE}",
         f"delete table inet {NFT_TABLE}",
         f"table inet {NFT_TABLE} {{",
+    ]
+    for uid, _, _ in child_uids:
+        lines.append(f"  set allow4_{uid} {{ type ipv4_addr; flags timeout; }}")
+    lines += [
         "  chain output_nat {",
         "    type nat hook output priority -100; policy accept;",
     ]
