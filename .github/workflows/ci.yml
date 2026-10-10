@@ -104,7 +104,7 @@ jobs:
       - name: Install system tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ufw apparmor-utils unattended-upgrades
+          sudo apt-get install -y ufw apparmor-utils unattended-upgrades nftables
 
       - name: Install Family Linux
         run: |
@@ -160,3 +160,38 @@ jobs:
           test -f /etc/dconf/db/local.d/00-family-linux
           test -f /etc/dconf/db/local.d/locks/00-family-linux
           echo "desktop lockdown files written"
+
+      - name: Confirm the per-child DNS gateway filters each child separately
+        run: |
+          # tiktok.com is blocked for every child by default (see WebFilterPolicy).
+          systemctl is-active family-dnsd
+          sudo nft list table inet family_linux | grep -q "skuid"
+          child=$(sudo -u cikid getent ahostsv4 tiktok.com | awk 'NR==1{print $1}')
+          echo "child lookup tiktok.com -> ${child:-none}"
+          test "$child" = "0.0.0.0"
+          parent=$(sudo -u ciparent getent ahostsv4 tiktok.com | awk 'NR==1{print $1}')
+          echo "parent lookup tiktok.com -> ${parent:-none}"
+          test -n "$parent" && test "$parent" != "0.0.0.0"
+
+      - name: Confirm a child cannot use DNS outside the gateway
+        run: |
+          if sudo -u cikid timeout 5 bash -c 'exec 3<>/dev/tcp/8.8.8.8/53' 2>/dev/null; then
+            echo "FAIL: child reached 8.8.8.8:53 directly"; exit 1
+          fi
+          if sudo -u cikid timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/853' 2>/dev/null; then
+            echo "FAIL: child reached DNS over TLS"; exit 1
+          fi
+          echo "direct DNS and DNS over TLS from child: blocked"
+
+      - name: Confirm a blocked lookup becomes a request and approval unblocks it
+        run: |
+          sudo -u cikid getent ahostsv4 omegle.com > /dev/null || true
+          # The gateway flushes requests every 30 seconds.
+          sleep 35
+          sudo "$(which python)" -m family_linux.cli.family_ctl web requests | tee /tmp/requests.txt
+          grep -q "omegle.com" /tmp/requests.txt
+          sudo "$(which python)" -m family_linux.cli.family_ctl web approve cikid omegle.com
+          sleep 2
+          approved=$(sudo -u cikid getent ahostsv4 omegle.com | awk 'NR==1{print $1}')
+          echo "child lookup omegle.com after approval -> ${approved:-none}"
+          test -n "$approved" && test "$approved" != "0.0.0.0"
