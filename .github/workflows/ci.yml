@@ -130,3 +130,15 @@ jobs:
           sudo aa-status | grep -q family-linux-child
           sudo aa-exec -p family-linux-child -- /bin/true
           echo "aa-exec launch under family-linux-child: ok"
+
+      - name: Confirm the child profile enforces its deny rules
+        run: |
+          # Positive control: a read the profile does not deny must still succeed.
+          sudo aa-exec -p family-linux-child -- cat /etc/hostname > /dev/null
+          echo "control read (/etc/hostname): allowed"
+          # The profile denies /etc/shadow; the read must fail while it is confined.
+          if sudo aa-exec -p family-linux-child -- cat /etc/shadow > /dev/null 2>&1; then
+            echo "FAIL: /etc/shadow readable under family-linux-child"
+            exit 1
+          fi
+          echo "/etc/shadow read: denied as expected"
