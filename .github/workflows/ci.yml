@@ -270,6 +270,13 @@ jobs:
                       print(f"RESULT {key}: loaded title={page.title()!r}")
                   except Exception as exc:
                       print(f"RESULT {key}: not loaded ({type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''})")
+                      try:
+                          page.wait_for_timeout(1500)
+                          import re as _re
+                          codes = sorted(set(_re.findall(r"(?:net::)?ERR_[A-Z0-9_]+", page.content())))
+                          print(f"DETAIL {key}: error page url={page.url[:80]} codes={codes[:5]}")
+                      except Exception as inner:
+                          print(f"DETAIL {key}: could not read error page ({inner})")
                   for line in failures[:8]:
                       print(f"DETAIL {key}: request failed {line}")
 
@@ -298,7 +305,7 @@ jobs:
           sudo -u cikid env HOME=/tmp/cikid-browser PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
             "$(which python)" /tmp/browser_check.py | tee /tmp/browser_results.txt
           echo "--- gateway TLS decisions for the child during the browser run:"
-          sudo journalctl -u family-dnsd --no-pager | grep "tls cikid" | tail -60 || true
+          sudo journalctl -u family-dnsd --no-pager | grep "tls cikid" | grep -i "cloudflare\|refuse\|could not\|upstream" | tail -60 || true
           echo "--- HTTPS DNS record for example.com (does it advertise ECH?):"
           dig +short HTTPS example.com @1.1.1.1 | head -3 | cut -c1-200 || true
           echo "--- addresses the gateway learned for the child (IPv4 allow set):"
