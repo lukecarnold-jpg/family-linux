@@ -287,6 +287,20 @@ Assessment so far (reasoning, not measured):
 
 Decision not taken: the Session 9 criterion ("implement option 2 if the weakness increases significantly") can't be applied, because the weakness was not measured. Option 2 (the dashboard requests page) does not close any weakness in any case.
 
+## Session 10: local end-to-end run (CI disabled)
+
+CI is disabled manually (`gh workflow disable CI`) while the account's billing is unresolved. To keep testing, the gateway was run end to end in a privileged Ubuntu 24.04 container with real nftables rules and two child accounts. systemd is not available in the container, so the gateway was started by hand.
+
+Results:
+- Child lookup of `tiktok.com` (blocked by default) returns `0.0.0.0`. The parent's lookup resolves normally.
+- A child's query sent to `8.8.8.8` is answered by the gateway with `0.0.0.0`.
+- Child TLS to a looked-up address with a looked-up name completes (TLS 1.3).
+- Child TLS to an address no lookup returned (`9.9.9.9`) is refused.
+- Child TLS to a learned address with a name never looked up (`tiktok.com`) is refused.
+- Parent connects directly to `9.9.9.9:443` (control).
+
+Not covered locally: the systemd unit, the AppArmor and gateway interaction (covered by the earlier VM job), headless Chrome, IPv6, and connection reuse. The Chrome measurement and the Session 8 decisions still wait on CI.
+
 ## Open items, in priority order
 
 1. Restore CI (billing), then run the Chrome launch matrix and the browser measurement (Session 9).
