@@ -21,6 +21,7 @@ import json
 import os
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -219,6 +220,89 @@ def clear_request(path: Path, child: str, name: str) -> None:
         Path(path).write_text(json.dumps(requests, indent=2), encoding="utf-8")
 
 
+def _skip_name(packet: bytes, pos: int) -> int:
+    """Returns the offset just past a (possibly compressed) name starting at pos."""
+    while True:
+        length = packet[pos]
+        if length == 0:
+            return pos + 1
+        if length & 0xC0:
+            return pos + 2
+        pos += 1 + length
+
+
+def parse_answer_addresses(reply: bytes) -> List[Tuple[str, int]]:
+    """Returns (address, ttl) for every A and AAAA record in a successful reply.
+
+    Malformed replies yield whatever was read before the error, so a bad reply never
+    stops the resolver.
+    """
+    found: List[Tuple[str, int]] = []
+    try:
+        if len(reply) < 12 or (reply[3] & 0x0F) != 0:
+            return found
+        qdcount, ancount = struct.unpack("!HH", reply[4:8])
+        pos = 12
+        for _ in range(qdcount):
+            pos = _skip_name(reply, pos) + 4
+        for _ in range(ancount):
+            pos = _skip_name(reply, pos)
+            rtype, _, ttl, rdlength = struct.unpack("!HHIH", reply[pos:pos + 10])
+            pos += 10
+            rdata = reply[pos:pos + rdlength]
+            pos += rdlength
+            if rtype == 1 and rdlength == 4:
+                found.append((socket.inet_ntop(socket.AF_INET, rdata), ttl))
+            elif rtype == 28 and rdlength == 16:
+                found.append((socket.inet_ntop(socket.AF_INET6, rdata), ttl))
+    except (IndexError, struct.error, OSError, ValueError):
+        pass
+    return found
+
+
+NFT_TABLE_NAME = "family_linux"
+MIN_ALLOW_SECONDS = 60
+MAX_ALLOW_SECONDS = 3600
+MAX_ADDRESSES_PER_ANSWER = 32
+
+
+def allow_set_names(uid: int) -> Tuple[str, str]:
+    """Names of the IPv4 and IPv6 address sets for one child's UID."""
+    return f"allow4_{uid}", f"allow6_{uid}"
+
+
+class AddressAllowList:
+    """Keeps a child's nftables address sets in step with the addresses their lookups returned.
+
+    Each address is allowed for the TTL of the record that returned it. The sets are
+    defined by web_gateway.render_nft; this only adds and refreshes elements.
+    """
+
+    def __init__(self, uid: int, runner: Optional[Callable[[List[str]], int]] = None):
+        self.uid = uid
+        self.v4, self.v6 = allow_set_names(uid)
+        self._run = runner or _run_nft
+
+    def add(self, entries: List[Tuple[str, int]]) -> int:
+        """Allows each address. Returns how many were added."""
+        added = 0
+        for address, ttl in entries[:MAX_ADDRESSES_PER_ANSWER]:
+            family_set = self.v6 if ":" in address else self.v4
+            seconds = min(max(int(ttl), MIN_ALLOW_SECONDS), MAX_ALLOW_SECONDS)
+            # Delete first so the timeout is refreshed; both commands may report "no such element".
+            self._run(["delete", "element", "inet", NFT_TABLE_NAME, family_set, "{", address, "}"])
+            if self._run(["add", "element", "inet", NFT_TABLE_NAME, family_set, "{", f"{address} timeout {seconds}s", "}"]) == 0:
+                added += 1
+        return added
+
+
+def _run_nft(args: List[str]) -> int:
+    try:
+        return subprocess.run(["nft", *args], capture_output=True, text=True).returncode
+    except OSError:
+        return 127
+
+
 class ChildResolver:
     """Answers one child's DNS queries according to that child's rules."""
 
@@ -230,6 +314,7 @@ class ChildResolver:
         general_upstream: str,
         log: RequestLog,
         forward: Forwarder = forward_dns,
+        allow_list: Optional[AddressAllowList] = None,
     ):
         self.username = username
         self.rules = rules
@@ -237,6 +322,7 @@ class ChildResolver:
         self.general_upstream = general_upstream
         self.log = log
         self.forward = forward
+        self.allow_list = allow_list
 
     def answer(self, query: bytes, tcp: bool = False) -> bytes:
         try:
@@ -256,6 +342,10 @@ class ChildResolver:
 
         if decision == "default" and len(reply) >= 4 and (reply[3] & 0x0F) == RCODE_NXDOMAIN:
             self.log.record(self.username, name, "not resolved by family filter")
+        if self.allow_list is not None:
+            # Only addresses from answers the parent allowed (directly or by default) may be
+            # reached by this child. Blocked answers never reach this point.
+            self.allow_list.add(parse_answer_addresses(reply))
         return reply
 
 
@@ -310,6 +400,7 @@ def run(config: dict) -> None:
             family_upstream=config["family_upstream"],
             general_upstream=config["general_upstream"],
             log=log,
+            allow_list=AddressAllowList(child["uid"]) if child.get("uid") is not None else None,
         )
         for target in (_serve_udp, _serve_tcp):
             thread = threading.Thread(target=target, args=(host, int(child["port"]), resolver), daemon=True)

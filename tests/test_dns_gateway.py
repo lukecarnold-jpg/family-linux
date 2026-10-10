@@ -222,3 +222,83 @@ def test_gateway_apply_writes_config_rules_and_unit_in_simulation(monkeypatch):
 def test_child_ports_are_stable_in_policy_order():
     policy = _policy()
     assert child_ports(policy) == {"kid": 5301, "teen": 5302}
+
+
+# --- direct-IP control: addresses from allowed answers --------------------
+
+def _answer_reply(query: bytes, ips_ttls) -> bytes:
+    """Builds a NOERROR reply whose answers are the given (ip, ttl) A records."""
+    body = bytearray(query[:2] + struct.pack("!H", 0x8180) + struct.pack("!HHHH", 1, len(ips_ttls), 0, 0) + query[12:])
+    for ip, ttl in ips_ttls:
+        body += b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, ttl, 4) + bytes(int(x) for x in ip.split("."))
+    return bytes(body)
+
+
+def test_parse_answer_addresses_reads_a_and_aaaa_with_ttls():
+    query = make_query("example.org")
+    reply = _answer_reply(query, [("93.184.216.34", 300)])
+    assert gw.parse_answer_addresses(reply) == [("93.184.216.34", 300)]
+
+    # AAAA record with compression pointer, appended by hand
+    aaaa = query[:2] + struct.pack("!H", 0x8180) + struct.pack("!HHHH", 1, 1, 0, 0) + query[12:]
+    aaaa += b"\xc0\x0c" + struct.pack("!HHIH", 28, 1, 120, 16) + bytes.fromhex("20010db8000000000000000000000001")
+    assert gw.parse_answer_addresses(aaaa) == [("2001:db8::1", 120)]
+
+
+def test_parse_answer_addresses_ignores_errors_and_truncation():
+    query = make_query("example.org")
+    nx = bytearray(_answer_reply(query, [("1.2.3.4", 60)]))
+    nx[3] = (nx[3] & 0xF0) | gw.RCODE_NXDOMAIN
+    assert gw.parse_answer_addresses(bytes(nx)) == []
+    assert gw.parse_answer_addresses(_answer_reply(query, [("1.2.3.4", 60)])[:-2]) == []
+
+
+def test_allow_list_adds_each_address_with_clamped_timeout():
+    calls = []
+    allow = gw.AddressAllowList(1002, runner=lambda args: calls.append(args) or 0)
+    assert allow.add([("93.184.216.34", 300), ("2001:db8::1", 5), ("10.0.0.1", 99999)]) == 3
+    adds = [c for c in calls if c[0] == "add"]
+    assert adds[0][-2] == "93.184.216.34 timeout 300s" and adds[0][4] == "allow4_1002"
+    assert adds[1][-2] == "2001:db8::1 timeout 60s" and adds[1][4] == "allow6_1002"
+    assert adds[2][-2] == "10.0.0.1 timeout 3600s"
+    # each address is deleted before it is added, so the timeout refreshes
+    assert calls[0][0] == "delete"
+
+
+def test_allowed_answers_feed_the_child_allow_list_but_blocked_answers_do_not(tmp_path):
+    seen = []
+
+    class Recorder:
+        def add(self, entries):
+            seen.extend(entries)
+            return len(entries)
+
+    fwd = lambda query, upstream, tcp: _answer_reply(query, [("93.184.216.34", 300)])
+    res, _ = resolver(tmp_path, fwd)
+    res.allow_list = Recorder()
+    res.answer(make_query("example.org"))
+    assert seen == [("93.184.216.34", 300)]
+
+    seen.clear()
+    res.answer(make_query("www.omegle.com"))
+    assert seen == []
+
+
+def test_nft_rules_drop_child_traffic_except_allowed_addresses():
+    rules = render_nft([(1002, 5301)])
+    assert "set allow4_1002 { type ipv4_addr; flags timeout; }" in rules
+    assert 'meta skuid 1002 oif "lo" accept' in rules
+    assert "meta skuid 1002 ip daddr @allow4_1002 accept" in rules
+    assert "meta skuid 1002 ip6 daddr @allow6_1002 accept" in rules
+    # the catch-all drop must come after every accept for that UID
+    last_accept = rules.rindex("@allow6_1002 accept")
+    assert rules.rindex("meta skuid 1002 drop") > last_accept
+
+
+def test_config_carries_uid_for_address_allow_list():
+    policy = _policy()
+    config = render_config(policy, "cleanbrowsing_family", {"kid": 1002})
+    kid = next(c for c in config["children"] if c["username"] == "kid")
+    teen = next(c for c in config["children"] if c["username"] == "teen")
+    assert kid["uid"] == 1002
+    assert teen["uid"] is None

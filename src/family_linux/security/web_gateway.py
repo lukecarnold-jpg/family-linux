@@ -36,8 +36,9 @@ def child_ports(policy: FamilyPolicy) -> Dict[str, int]:
     return {child.username: PORT_BASE + index for index, child in enumerate(policy.children)}
 
 
-def render_config(policy: FamilyPolicy, provider: str) -> dict:
+def render_config(policy: FamilyPolicy, provider: str, uids: Optional[Dict[str, int]] = None) -> dict:
     ports = child_ports(policy)
+    uids = uids or {}
     family_upstream = DNS_SERVERS.get(provider, DNS_SERVERS[DNSProvider.CLEANBROWSING_FAMILY.value])[0]
     return {
         "listen_address": LISTEN_ADDRESS,
@@ -48,6 +49,7 @@ def render_config(policy: FamilyPolicy, provider: str) -> dict:
         "children": [
             {
                 "username": child.username,
+                "uid": uids.get(child.username),
                 "port": ports[child.username],
                 "blocked": list(child.web_filter.blocked_domains),
                 "allowed": list(child.web_filter.allowed_domains),
@@ -58,11 +60,21 @@ def render_config(policy: FamilyPolicy, provider: str) -> dict:
 
 
 def render_nft(child_uids: List[Tuple[int, int]]) -> str:
-    """Ruleset for (uid, port) pairs. Re-applying it replaces the table atomically."""
+    """Ruleset for (uid, port) pairs. Re-applying it replaces the table atomically.
+
+    Per child: DNS is redirected to the child's gateway port, DNS over TLS is dropped, and all
+    other outbound traffic is dropped unless it is loopback, part of an established
+    connection, or to an address the gateway has just returned in a lookup (the allow sets).
+    """
     lines = [
         f"add table inet {NFT_TABLE}",
         f"delete table inet {NFT_TABLE}",
         f"table inet {NFT_TABLE} {{",
+    ]
+    for uid, _ in child_uids:
+        lines.append(f"  set allow4_{uid} {{ type ipv4_addr; flags timeout; }}")
+        lines.append(f"  set allow6_{uid} {{ type ipv6_addr; flags timeout; }}")
+    lines += [
         "  chain output_nat {",
         "    type nat hook output priority -100; policy accept;",
     ]
@@ -75,9 +87,15 @@ def render_nft(child_uids: List[Tuple[int, int]]) -> str:
         "    type filter hook output priority 0; policy accept;",
     ]
     for uid, _ in child_uids:
-        # DNS over TLS and QUIC would bypass the gateway, so stop them for children.
-        lines.append(f"    meta skuid {uid} tcp dport 853 drop")
-        lines.append(f"    meta skuid {uid} udp dport 853 drop")
+        lines += [
+            f"    meta skuid {uid} tcp dport 853 drop",
+            f"    meta skuid {uid} udp dport 853 drop",
+            f'    meta skuid {uid} oif "lo" accept',
+            f"    meta skuid {uid} ct state established,related accept",
+            f"    meta skuid {uid} ip daddr @allow4_{uid} accept",
+            f"    meta skuid {uid} ip6 daddr @allow6_{uid} accept",
+            f"    meta skuid {uid} drop",
+        ]
     lines += ["  }", "}", ""]
     return "\n".join(lines)
 
@@ -121,7 +139,8 @@ class WebGateway:
             return warnings
 
         provider = policy.children[0].web_filter.dns_provider
-        config = render_config(policy, provider)
+        uids = {child.username: uid for child in policy.children if (uid := self._uid(child.username)) is not None}
+        config = render_config(policy, provider, uids)
         self.adapter.write_system_file(GATEWAY_CONFIG_PATH, json.dumps(config, indent=2) + "\n", mode=0o600)
         self.adapter.write_system_file(SERVICE_PATH, render_service(), mode=0o644)
 
