@@ -268,14 +268,34 @@ Known limits:
 - **Cost.** HTTPS and HTTP for children now go through a userspace proxy. Expect extra CPU and latency on a small device.
 - **Linux only.** The proxy reads the original destination from netfilter.
 
+## Session 9: testing the server-name control in a real browser
+
+Goal: measure the two open weaknesses from Session 8 (ECH and QUIC decisions, connection reuse) before deciding whether to build the next option.
+
+Outcome: **not measured yet.** Two blockers:
+
+- **CI is not running.** GitHub refused every job with "recent account payments have failed or your spending limit needs to be increased." Pushes since then have not been tested on the VM. This needs a billing fix on the account.
+- **Headless Chrome crashes** as the child account before loading any page (`chrome_crashpad_handler: --database is required`). A matrix of launch variants was added to the job but has not run. The crash is in the test harness, not the gateway.
+
+Corrections to earlier notes:
+- **IPv6 was not broken by the gateway.** An earlier note said IPv6 HTTPS failed for children. The VM has no global IPv6 address or default route, and the parent's own `curl -6` fails the same way. The redirect rules were fine; the environment had no IPv6 path.
+- The IPv6 listeners on `::1` and the explicit `dnat ip6 to [::1]:port` rules are still the correct design. They are unverified end to end, because the VM has no IPv6 route to test them against.
+
+Assessment so far (reasoning, not measured):
+- **Connection reuse.** A browser normally resolves a host before it connects, and the gateway returns `0.0.0.0` for blocked hosts, so a blocked site is unlikely to be reached through a reused connection. Not measured, so not confirmed.
+- **ECH refusal and QUIC drop.** These are usability costs (some sites may fail for children), not bypasses.
+
+Decision not taken: the Session 9 criterion ("implement option 2 if the weakness increases significantly") can't be applied, because the weakness was not measured. Option 2 (the dashboard requests page) does not close any weakness in any case.
+
 ## Open items, in priority order
 
-1. Confirm the Session 8 decisions (ECH refused, QUIC dropped) and check connection-coalescing behaviour in a real browser on the VM.
-2. Dashboard page for web requests (API exists).
-3. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
-4. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
-5. Extend the VM job to launch each approved app under the profile (only `/bin/true`, `env`, and `cat` have been exercised).
-6. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
-7. Add a pre-apply plan (dry-run diff) and consider rollback.
-8. Packaging: install the console scripts and systemd units.
-9. Scrub or recreate backups that hold old plaintext passwords.
+1. Restore CI (billing), then run the Chrome launch matrix and the browser measurement (Session 9).
+2. Confirm the Session 8 decisions (ECH refused, QUIC dropped) with the measurement results.
+3. Dashboard page for web requests (API exists).
+4. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
+5. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
+6. Extend the VM job to launch each approved app under the profile (only `/bin/true`, `env`, and `cat` have been exercised).
+7. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
+8. Add a pre-apply plan (dry-run diff) and consider rollback.
+9. Packaging: install the console scripts and systemd units.
+10. Scrub or recreate backups that hold old plaintext passwords.
