@@ -40,10 +40,12 @@ jobs:
           pytest -v --durations=10
 
       - name: Run Family Linux CLI & bootstrap smoke tests
+        env:
+          PARENT_PASS: "ci-only-Pass1"
         run: |
           chmod +x scripts/bootstrap-prototype.sh scripts/build-autoinstall-iso.sh
           ./scripts/bootstrap-prototype.sh --help
-          ./scripts/bootstrap-prototype.sh install --dry-run --non-interactive --parent-user "admin" --parent-name "Admin"
+          ./scripts/bootstrap-prototype.sh install --dry-run --non-interactive --parent-user "admin" --parent-name "Admin" --parent-pass "$PARENT_PASS"
           ./scripts/bootstrap-prototype.sh ctl status
           ./scripts/bootstrap-prototype.sh ctl user add testchild --name "Test Child" --tier young_child
           ./scripts/bootstrap-prototype.sh ctl app approve testchild tuxpaint
@@ -53,3 +55,34 @@ jobs:
           ./scripts/bootstrap-prototype.sh policyd --one-shot
           ./scripts/bootstrap-prototype.sh autoinstall ci-autoinstall.yaml
           test -f ci-autoinstall.yaml
+
+  linux-integration:
+    name: Privileged Linux integration (Python 3.12 on ubuntu-latest)
+    runs-on: ubuntu-latest
+    # Creates real accounts, rewrites /etc/sudoers.d, and enables UFW.
+    # Safe only because the runner is ephemeral.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ufw apparmor-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run integration tests as root
+        env:
+          FAMILY_LINUX_INTEGRATION: "1"
+        run: |
+          sudo -E env "PATH=$PATH" FAMILY_LINUX_INTEGRATION=1 \
+            "$(which python)" -m pytest tests/integration -v -p no:cacheprovider
