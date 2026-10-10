@@ -1,0 +1,39 @@
+# Default Policy
+
+child:
+  shell_access: false
+  package_installation: false
+  system_settings: false
+  internet_policy: restricted
+  app_allow_list: true
+
+parent:
+  admin_access: true
+  child_management: true
+  app_approvals: true
+  browsing_policy_management: true
+  logs_access: true
+
+admin:
+  maintenance: true
+  system_updates: true
+  policy_review: true
+  privileged_recovery: true
+
+security:
+  default_firewall: deny_incoming
+  no_remote_exploration: true
+  restricted_repositories: true
+  package_verification_required: true
+
+desktop:
+  default_session: kiosk
+  launcher_mode: approved_apps_only
+  browser_mode: family_safe
+  terminal_available_to_child: false
+
+policy:
+  screen_time: enabled
+  account_isolation: true
+  audit_logging: true
+  recovery_mode: supported
