@@ -261,6 +261,13 @@ jobs:
           echo "--- child curl over IPv4 and IPv6:"
           sudo -u cikid curl -4 -sS --max-time 20 -o /dev/null -w "v4 http=%{http_code}\n" https://example.com || true
           sudo -u cikid curl -6 -sS --max-time 20 -o /dev/null -w "v6 http=%{http_code}\n" https://example.com || true
+          echo "--- chrome launch variants (exit code, first stderr line):"
+          for variant in "--headless=new" "--headless=old" "--headless=new --no-zygote --single-process" "--headless=new --disable-crash-reporter --crash-dumps-dir=/tmp/cikid-browser/crashes"; do
+            sudo -u cikid mkdir -p /tmp/cikid-browser/crashes 2>/dev/null || true
+            out=$(sudo -u cikid env HOME=/tmp/cikid-browser timeout 60 google-chrome $variant --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --user-data-dir=/tmp/cikid-browser/profile-$RANDOM --dump-dom https://example.com 2>/tmp/chrome-err.txt)
+            rc=$?
+            echo "variant [$variant]: rc=$rc dump_has_title=$(echo "$out" | grep -c '<title') err=$(head -1 /tmp/chrome-err.txt | cut -c1-120)"
+          done
           echo "--- child chrome stderr (first lines):"
           sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome --headless=new --no-sandbox \
             --disable-gpu --disable-dev-shm-usage --disable-breakpad --disable-crash-reporter --no-first-run --user-data-dir=/tmp/cikid-browser/profile \
