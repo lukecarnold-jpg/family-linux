@@ -305,6 +305,10 @@ jobs:
           sudo nft list set inet family_linux allow4_$(id -u cikid) || true
           echo "--- gateway request log for the child (why connections were refused):"
           sudo "$(which python)" -m family_linux.cli.family_ctl web requests || true
+          echo "--- control: the same browser check as the parent (no gateway):"
+          sudo install -d -o ciparent /tmp/ciparent-browser
+          sudo -u ciparent env HOME=/tmp/ciparent-browser PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+            "$(which python)" /tmp/browser_check.py | sed 's/^/CONTROL parent /' || true
           grep -q "RESULT allowed: loaded" /tmp/browser_results.txt || { echo "FAIL: child cannot load an allowed site"; exit 1; }
           if grep -q "RESULT blocked: loaded" /tmp/browser_results.txt; then
             echo "FAIL: child loaded a blocked site"; exit 1
