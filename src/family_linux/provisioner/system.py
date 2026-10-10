@@ -141,7 +141,12 @@ class SystemProvisioner:
                 )
 
         # 7. Apply desktop launcher restrictions
+        # Approved apps are launched through the confinement profile only when AppArmor is active;
+        # otherwise aa-exec would fail and the apps would not start.
+        confine = self.apparmor.is_available()
         for child in policy.children:
-            hidden = self.app_guard.apply_child_desktop_filters(child)
-            results["actions"].append(f"Child desktop menu filtered for '{child.username}' ({hidden} apps hidden)")
+            hidden, confined = self.app_guard.apply_child_desktop_filters(child, confine=confine)
+            results["actions"].append(
+                f"Child desktop menu filtered for '{child.username}' ({hidden} apps hidden, {confined} confined)"
+            )
 

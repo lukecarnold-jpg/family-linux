@@ -112,3 +112,52 @@ def test_dry_run_propagates_to_policy_and_audit_writers():
     assert provisioner.config_manager.dry_run is True
     assert provisioner.audit.dry_run is True
     assert provisioner.app_guard.audit.dry_run is True
+
+
+def test_confined_profile_name_matches_desktop_wrapper():
+    from family_linux.security.apparmor import CHILD_SESSION_PROFILE, PROFILE_NAME
+    from family_linux.security.app_guard import AA_EXEC_PREFIX
+
+    assert f"profile {PROFILE_NAME} " in CHILD_SESSION_PROFILE
+    assert AA_EXEC_PREFIX == f"aa-exec -p {PROFILE_NAME} -- "
+
+
+def test_child_desktop_filters_hide_unapproved_and_confine_approved(tmp_path):
+    from family_linux.security.app_guard import AppGuard
+
+    system_apps = tmp_path / "usr-share-applications"
+    system_apps.mkdir()
+    (system_apps / "tuxpaint.desktop").write_text(
+        "[Desktop Entry]\nType=Application\nName=Tux Paint\nExec=tuxpaint %F\nIcon=tuxpaint\n"
+    )
+    (system_apps / "xterm.desktop").write_text("[Desktop Entry]\nType=Application\nName=XTerm\nExec=xterm\n")
+
+    child = ChildAccount.create("kid", "Kid", age_tier="young_child", password="KidPass123!")
+    adapter = SystemAdapter(dry_run=True)
+    hidden, confined = AppGuard(adapter).apply_child_desktop_filters(
+        child, confine=True, home_root=tmp_path / "home", app_dirs=[system_apps]
+    )
+
+    assert (hidden, confined) == (1, 1)
+    home_apps = tmp_path / "home" / "kid" / ".local/share/applications"
+    tux = adapter.simulated_files[str(home_apps / "tuxpaint.desktop")]
+    assert "Exec=aa-exec -p family-linux-child -- tuxpaint %F" in tux
+    assert "Name=Tux Paint" in tux
+    xterm = adapter.simulated_files[str(home_apps / "xterm.desktop")]
+    assert "NoDisplay=true" in xterm
+
+
+def test_child_desktop_filters_do_not_confine_when_apparmor_inactive(tmp_path):
+    from family_linux.security.app_guard import AppGuard
+
+    system_apps = tmp_path / "apps"
+    system_apps.mkdir()
+    (system_apps / "tuxpaint.desktop").write_text("[Desktop Entry]\nName=Tux Paint\nExec=tuxpaint\n")
+    child = ChildAccount.create("kid", "Kid", age_tier="young_child", password="KidPass123!")
+    adapter = SystemAdapter(dry_run=True)
+
+    hidden, confined = AppGuard(adapter).apply_child_desktop_filters(
+        child, confine=False, home_root=tmp_path / "home", app_dirs=[system_apps]
+    )
+    assert (hidden, confined) == (0, 0)
+    assert not adapter.simulated_files

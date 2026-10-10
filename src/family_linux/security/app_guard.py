@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Tuple
 
 from family_linux.models import ChildAccount, ALWAYS_BLOCKED_COMMANDS
 from family_linux.security.adapter import SystemAdapter
+from family_linux.security.apparmor import PROFILE_NAME
 from family_linux.audit.logger import AuditLogger
 
 SYSTEM_APP_DIRS = [
@@ -58,12 +59,12 @@ class AppGuard:
 
         return True
 
-    def discover_system_apps(self) -> List[Dict[str, str]]:
+    def discover_system_apps(self, app_dirs: Optional[List[Path]] = None) -> List[Dict[str, str]]:
         """Scans system application directories for installed desktop entries."""
         apps = []
         seen = set()
 
-        for d in SYSTEM_APP_DIRS:
+        for d in app_dirs if app_dirs is not None else SYSTEM_APP_DIRS:
             if not d.exists():
                 continue
             for desktop_file in d.glob("*.desktop"):
@@ -93,22 +94,32 @@ class AppGuard:
 
         return sorted(apps, key=lambda a: a["name"].lower())
 
-    def apply_child_desktop_filters(self, child: ChildAccount) -> int:
-        """Configures ~/.local/share/applications for child, hiding unapproved apps."""
-        child_apps_dir = Path(f"/home/{child.username}/.local/share/applications")
+    def apply_child_desktop_filters(
+        self,
+        child: ChildAccount,
+        confine: bool = False,
+        home_root: Path = Path("/home"),
+        app_dirs: Optional[List[Path]] = None,
+    ) -> Tuple[int, int]:
+        """Writes the child's ~/.local/share/applications overrides.
+
+        Unapproved apps are hidden with NoDisplay=true. When confine is True (AppArmor is active
+        and the profile is loaded), approved apps are rewritten to launch through
+        `aa-exec -p family-linux-child`, which attaches the confinement profile to them.
+
+        Returns (hidden, confined) counts.
+        """
+        child_apps_dir = home_root / child.username / ".local/share/applications"
         if not self.adapter.dry_run and not self.adapter.is_root():
-            return 0
+            return 0, 0
 
         self.adapter.run_command(["mkdir", "-p", str(child_apps_dir)])
 
-        # Discover system apps and override non-approved ones with NoDisplay=true
-        all_apps = self.discover_system_apps()
         hidden_count = 0
-
-        for app in all_apps:
+        confined_count = 0
+        for app in self.discover_system_apps(app_dirs):
+            override_file = child_apps_dir / f"{app['id']}.desktop"
             if not self.is_app_allowed(child, app["id"]):
-                # Write an override hiding the app
-                override_file = child_apps_dir / f"{app['id']}.desktop"
                 override_content = (
                     "[Desktop Entry]\n"
                     "Type=Application\n"
@@ -118,5 +129,26 @@ class AppGuard:
                 )
                 self.adapter.write_system_file(override_file, override_content, mode=0o644)
                 hidden_count += 1
+            elif confine:
+                try:
+                    source = Path(app["file"]).read_text(encoding="utf-8", errors="ignore")
+                except OSError:
+                    continue
+                self.adapter.write_system_file(override_file, confine_desktop_entry(source), mode=0o644)
+                confined_count += 1
 
-        return hidden_count
+        return hidden_count, confined_count
+
+
+AA_EXEC_PREFIX = f"aa-exec -p {PROFILE_NAME} -- "
+
+
+def confine_desktop_entry(source: str) -> str:
+    """Returns a copy of a .desktop file whose Exec lines run through aa-exec."""
+    lines = []
+    for line in source.splitlines():
+        if line.startswith("Exec="):
+            lines.append("Exec=" + AA_EXEC_PREFIX + line[len("Exec="):])
+        else:
+            lines.append(line)
+    return "\n".join(lines) + "\n"

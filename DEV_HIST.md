@@ -150,10 +150,20 @@ Limitations of the container runs:
 - No snapd, no desktop session, and `/etc/hosts` is a bind mount.
 - AppArmor is not active in the container, so the "loaded in enforce mode" check fails there. That is the correct result for this environment. Confirming it passes needs a VM or a host with AppArmor enabled.
 
+## Session 3: AppArmor attachment
+
+The profile was named but never attached, so it could not confine any process (open item 1 in Session 2).
+
+- Approved apps for a child are now launched through `aa-exec -p family-linux-child`. `AppGuard` writes a per-user desktop entry whose `Exec=` lines are prefixed with that command. `aa-exec` ships in Ubuntu's `apparmor` package.
+- The wrapper is written only when AppArmor is active (`aa-status --enabled` succeeds). Otherwise `aa-exec` would fail to start the app, so approved apps stay unwrapped.
+- The profile name is defined once in `security/apparmor.py` (`PROFILE_NAME`) and imported by `app_guard.py`. A test checks that the profile text uses it.
+- `apply_child_desktop_filters` now takes `confine`, `home_root`, and `app_dirs`, and returns `(hidden, confined)`. The injected paths let tests run without touching `/home`.
+- Verified in the Ubuntu container: the profile parses with `apparmor_parser -Q`, and a live install with AppArmor inactive wraps nothing. The attachment itself has not been exercised at runtime, because the container has no AppArmor kernel and no desktop. Next step is a VM run and a check that `aa-exec` launches each approved app under the profile.
+
 ## Open items, in priority order
 
 1. Run the live install and `verify` on a real Ubuntu VM (with AppArmor and systemd running). The container cannot pass the AppArmor check or show a running service.
-2. Verify that the AppArmor profile confines anything. The profile is named but has no attachment (no path or `attach` rule), so it may not confine any process even when loaded. Check whether `aa-status` shows it attached to a process, then add the attachment.
+2. Exercise the AppArmor attachment on a VM: confirm `aa-exec` launches each approved app under `family-linux-child` and that the profile's deny rules do not break normal app use. The attachment is now wired (Session 3), but runtime behaviour is unverified.
 3. Child session lockdown (see Not done).
 4. Test the child login path with a real GNOME or Ubuntu session (finding 7).
 5. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.

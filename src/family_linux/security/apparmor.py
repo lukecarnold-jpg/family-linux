@@ -11,6 +11,7 @@ from typing import Optional, List
 from family_linux.security.adapter import SystemAdapter
 
 APPARMOR_DIR = Path("/etc/apparmor.d")
+PROFILE_NAME = "family-linux-child"
 PROFILE_PATH = APPARMOR_DIR / "family-linux-child"
 
 
