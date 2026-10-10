@@ -29,6 +29,8 @@ from family_linux.security.adapter import SystemAdapter
 from family_linux.security.apparmor import PROFILE_PATH
 from family_linux.security.browser import CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
 from family_linux.security.users import SUDOERS_FILE
+from family_linux.security.dns_gateway import clear_request, load_requests
+from family_linux.security.web_gateway import REQUESTS_PATH
 
 
 def format_table(headers: List[str], rows: List[List[str]]) -> str:
@@ -276,20 +278,67 @@ class FamilyCtl:
                 print(f"    ... and {len(all_blocked) - 10} more")
 
         elif args.web_action == "block":
-            for c in policy.children:
+            targets = self._web_targets(policy, args.child)
+            for c in targets:
                 if args.domain not in c.web_filter.blocked_domains:
                     c.web_filter.blocked_domains.append(args.domain)
             self.provisioner.apply_policy(policy, reason=f"Blocked domain {args.domain}")
-            print(f"[OK] Added '{args.domain}' to blocked domains across all child accounts.")
+            print(f"[OK] Blocked '{args.domain}' for {self._describe(targets)}.")
 
         elif args.web_action == "allow":
-            for c in policy.children:
+            targets = self._web_targets(policy, args.child)
+            for c in targets:
                 if args.domain not in c.web_filter.allowed_domains:
                     c.web_filter.allowed_domains.append(args.domain)
                 if args.domain in c.web_filter.blocked_domains:
                     c.web_filter.blocked_domains.remove(args.domain)
             self.provisioner.apply_policy(policy, reason=f"Allowed domain {args.domain}")
-            print(f"[OK] Added '{args.domain}' to allowed domains across all child accounts.")
+            print(f"[OK] Allowed '{args.domain}' for {self._describe(targets)}.")
+
+        elif args.web_action == "requests":
+            requests = load_requests(REQUESTS_PATH)
+            rows = []
+            for child, names in sorted(requests.items()):
+                for name, info in sorted(names.items()):
+                    rows.append([child, name, str(info.get("count", 0)), str(info.get("reason", "")), str(info.get("last_seen", ""))])
+            if not rows:
+                print("No pending web requests.")
+                return
+            print(format_table(["Child", "Domain", "Attempts", "Reason", "Last seen"], rows))
+            print("Approve with: family-ctl web approve CHILD DOMAIN   Dismiss with: family-ctl web deny CHILD DOMAIN")
+
+        elif args.web_action == "approve":
+            child = self._require_child(policy, args.child)
+            if args.domain not in child.web_filter.allowed_domains:
+                child.web_filter.allowed_domains.append(args.domain)
+            if args.domain in child.web_filter.blocked_domains:
+                child.web_filter.blocked_domains.remove(args.domain)
+            self.provisioner.apply_policy(policy, reason=f"Approved {args.domain} for {child.username}")
+            clear_request(REQUESTS_PATH, child.username, args.domain)
+            print(f"[OK] Approved '{args.domain}' for '{child.username}'.")
+
+        elif args.web_action == "deny":
+            child = self._require_child(policy, args.child)
+            clear_request(REQUESTS_PATH, child.username, args.domain)
+            print(f"[OK] Dismissed request for '{args.domain}' from '{child.username}'. It stays blocked.")
+
+    def _web_targets(self, policy: FamilyPolicy, username: Optional[str]) -> List[ChildAccount]:
+        if username is None:
+            return list(policy.children)
+        return [self._require_child(policy, username)]
+
+    def _require_child(self, policy: FamilyPolicy, username: str) -> ChildAccount:
+        child = next((c for c in policy.children if c.username == username), None)
+        if child is None:
+            print(f"[ERROR] Child user '{username}' not found.")
+            sys.exit(1)
+        return child
+
+    @staticmethod
+    def _describe(targets: List[ChildAccount]) -> str:
+        if len(targets) == 1:
+            return f"'{targets[0].username}'"
+        return f"{len(targets)} child account(s)"
 
     def cmd_audit(self, args: argparse.Namespace) -> None:
         records = self.audit.get_records(
@@ -489,11 +538,23 @@ def main() -> None:
     web_sp = web_p.add_subparsers(dest="web_action", required=True)
     web_sp.add_parser("status", help="Show web filtering settings")
 
-    web_blk_p = web_sp.add_parser("block", help="Add domain to blocklist")
-    web_blk_p.add_argument("domain", help="Domain name (e.g. example.com)")
+    web_blk_p = web_sp.add_parser("block", help="Add domain to a child's blocklist")
+    web_blk_p.add_argument("domain", help="Domain name (e.g. example.com, or *.example for any host under example)")
+    web_blk_p.add_argument("--child", help="Only this child (default: all children)")
 
-    web_alw_p = web_sp.add_parser("allow", help="Add domain to allowlist")
+    web_alw_p = web_sp.add_parser("allow", help="Add domain to a child's allowlist")
     web_alw_p.add_argument("domain", help="Domain name")
+    web_alw_p.add_argument("--child", help="Only this child (default: all children)")
+
+    web_sp.add_parser("requests", help="List blocked lookups waiting for a parent decision")
+
+    web_apr_p = web_sp.add_parser("approve", help="Allow a requested domain for one child")
+    web_apr_p.add_argument("child", help="Child username")
+    web_apr_p.add_argument("domain", help="Requested domain")
+
+    web_den_p = web_sp.add_parser("deny", help="Dismiss a requested domain (it stays blocked)")
+    web_den_p.add_argument("child", help="Child username")
+    web_den_p.add_argument("domain", help="Requested domain")
 
     # audit
     audit_p = subparsers.add_parser("audit", help="View security and policy audit logs")

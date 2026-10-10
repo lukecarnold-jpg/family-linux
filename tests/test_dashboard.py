@@ -17,7 +17,7 @@ from family_linux.parent_ui.server import SESSION_COOKIE, make_handler
 from family_linux.provisioner.system import SystemProvisioner
 from family_linux.screentime.tracker import ScreenTimeTracker
 from family_linux.security.adapter import SystemAdapter
-from family_linux.models import ParentAccount, FamilyPolicy
+from family_linux.models import ChildAccount, FamilyPolicy, ParentAccount
 
 TOKEN = "test-token-123"
 
@@ -186,3 +186,51 @@ def test_oversized_body_is_413(server):
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(req)
     assert exc.value.code == 413
+
+
+def test_requests_and_approval_endpoints(tmp_path: Path):
+    import threading as _threading
+    from family_linux.security.dns_gateway import RequestLog
+
+    config = PolicyConfigManager(config_path=tmp_path / "policy.yaml")
+    policy = FamilyPolicy(parent=ParentAccount("parent", "Parent Admin", "ParentPass1!"),
+                          children=[ChildAccount.create("kid", "Kid", "pre_teen", password="KidPass123!")])
+    config.save_policy(policy)
+    requests_file = tmp_path / "web-requests.json"
+    log = RequestLog(requests_file)
+    log.record("kid", "tiktok.com", "blocked by parent rule")
+    log.flush()
+
+    allowed: set[str] = set()
+    handler = make_handler(
+        config_manager=config,
+        provisioner=SystemProvisioner(adapter=SystemAdapter(dry_run=True), config_manager=config,
+                                      audit_logger=AuditLogger(log_path=tmp_path / "audit.log")),
+        tracker=ScreenTimeTracker(usage_file=tmp_path / "usage.json"),
+        audit=AuditLogger(log_path=tmp_path / "audit.log"),
+        token=TOKEN,
+        allowed_hosts=allowed,
+        requests_path=requests_file,
+    )
+    httpd = HTTPServer(("127.0.0.1", 0), handler)
+    allowed.add(f"127.0.0.1:{httpd.server_port}")
+    thread = _threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, _, body = _request(httpd, "/api/web/requests", headers={"Authorization": f"Bearer {TOKEN}"})
+        assert status == 200
+        assert "tiktok.com" in json.loads(body)["kid"]
+
+        status, _, _ = _request(httpd, "/api/web/approve", method="POST",
+                                body={"username": "kid", "domain": "tiktok.com"}, headers=AUTH)
+        assert status == 200
+        kid = config.load_policy().children[0]
+        assert "tiktok.com" in kid.web_filter.allowed_domains
+        assert "tiktok.com" not in json.loads(requests_file.read_text()).get("kid", {})
+
+        status, _, _ = _request(httpd, "/api/web/approve", method="POST",
+                                body={"username": "nobody", "domain": "x.com"}, headers=AUTH)
+        assert status == 400
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

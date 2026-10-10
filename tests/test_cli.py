@@ -1,6 +1,7 @@
 """Tests for family-ctl administration command-line interface."""
 
 import argparse
+import json
 import platform
 from pathlib import Path
 import pytest
@@ -95,14 +96,14 @@ def test_cli_app_approve_and_revoke(test_ctl: FamilyCtl):
 
 
 def test_cli_web_block_and_allow(test_ctl: FamilyCtl):
-    args_blk = argparse.Namespace(web_action="block", domain="distraction.net")
+    args_blk = argparse.Namespace(web_action="block", domain="distraction.net", child=None)
     test_ctl.cmd_web(args_blk)
 
     policy = test_ctl.config_manager.load_policy()
     alice = policy.children[0]
     assert "distraction.net" in alice.web_filter.blocked_domains
 
-    args_alw = argparse.Namespace(web_action="allow", domain="distraction.net")
+    args_alw = argparse.Namespace(web_action="allow", domain="distraction.net", child=None)
     test_ctl.cmd_web(args_alw)
 
     policy = test_ctl.config_manager.load_policy()
@@ -126,3 +127,51 @@ def test_cli_time_set(test_ctl: FamilyCtl):
     alice = policy.children[0]
     assert alice.time_limits.daily_limit_minutes == 45
     assert alice.time_limits.bedtime_weekday == "19:30"
+
+
+def test_cli_web_rules_can_target_one_child(test_ctl: FamilyCtl, capsys):
+    policy = test_ctl.config_manager.load_policy()
+    policy.children.append(ChildAccount.create("bob", "Bob", age_tier=AgeTier.TEEN, password="BobPass123"))
+    test_ctl.config_manager.save_policy(policy)
+
+    test_ctl.cmd_web(argparse.Namespace(web_action="block", domain="games.example", child="bob"))
+    policy = test_ctl.config_manager.load_policy()
+    alice = next(c for c in policy.children if c.username == "alice")
+    bob = next(c for c in policy.children if c.username == "bob")
+    assert "games.example" in bob.web_filter.blocked_domains
+    assert "games.example" not in alice.web_filter.blocked_domains
+
+
+def test_cli_web_approve_allows_request_for_one_child(test_ctl: FamilyCtl, tmp_path, monkeypatch):
+    import family_linux.cli.family_ctl as family_ctl_module
+    from family_linux.security.dns_gateway import RequestLog
+
+    requests_file = tmp_path / "web-requests.json"
+    monkeypatch.setattr(family_ctl_module, "REQUESTS_PATH", requests_file)
+
+    log = RequestLog(requests_file)
+    log.record("alice", "omegle.com", "blocked by parent rule")
+    log.flush()
+
+    test_ctl.cmd_web(argparse.Namespace(web_action="approve", child="alice", domain="omegle.com"))
+
+    policy = test_ctl.config_manager.load_policy()
+    alice = policy.children[0]
+    assert "omegle.com" in alice.web_filter.allowed_domains
+    assert "omegle.com" not in alice.web_filter.blocked_domains
+    assert "omegle.com" not in json.loads(requests_file.read_text()).get("alice", {})
+
+
+def test_cli_web_requests_lists_pending(test_ctl: FamilyCtl, tmp_path, monkeypatch, capsys):
+    import family_linux.cli.family_ctl as family_ctl_module
+    from family_linux.security.dns_gateway import RequestLog
+
+    requests_file = tmp_path / "web-requests.json"
+    monkeypatch.setattr(family_ctl_module, "REQUESTS_PATH", requests_file)
+    log = RequestLog(requests_file)
+    log.record("alice", "tiktok.com", "blocked by parent rule")
+    log.flush()
+
+    test_ctl.cmd_web(argparse.Namespace(web_action="requests"))
+    out = capsys.readouterr().out
+    assert "tiktok.com" in out and "alice" in out

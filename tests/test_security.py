@@ -83,7 +83,9 @@ def test_browser_policy_generation():
     assert chromium["IncognitoModeAvailability"] == 1
     assert chromium["DeveloperToolsAvailability"] == 2
     assert chromium["ForceGoogleSafeSearch"] is True
-    assert "https://distracting.com" in chromium["URLBlocklist"]
+    # URL rules are per child and enforced by the DNS gateway, not machine-wide browser policy.
+    assert "URLBlocklist" not in chromium
+    assert "WebsiteFilter" not in ff["policies"]
 
 
 def test_app_guard_blocks_blacklisted_and_unapproved():
@@ -192,17 +194,6 @@ def test_terminal_programs_are_blocked_for_children():
             assert app.lower() not in ALWAYS_BLOCKED_COMMANDS
     for name in ("gnome-terminal", "org.gnome.terminal", "org.gnome.console", "xterm", "bash"):
         assert name in ALWAYS_BLOCKED_COMMANDS
-
-
-def test_wildcard_block_rules_are_expressed_correctly_for_firefox():
-    from family_linux.security.browser import BrowserPolicyManager
-
-    policy = BrowserPolicyManager(SystemAdapter(dry_run=True)).generate_firefox_policy(
-        WebFilterPolicy(blocked_domains=["*.adult", "omegle.com"], allowed_domains=["*.wikipedia.org"])
-    )["policies"]["WebsiteFilter"]
-    assert "*://*.adult/*" in policy["Block"]
-    assert "*://omegle.com/*" in policy["Block"]
-    assert policy["Exceptions"] == ["*://*.wikipedia.org/*"]
 
 
 def test_hosts_blocklist_skips_wildcards_and_reports_them(tmp_path, monkeypatch):

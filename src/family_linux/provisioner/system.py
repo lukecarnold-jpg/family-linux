@@ -18,6 +18,7 @@ from family_linux.security.browser import BrowserPolicyManager
 from family_linux.security.apparmor import AppArmorManager
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.desktop_lockdown import DesktopLockdown
+from family_linux.security.web_gateway import WebGateway
 from family_linux.config import PolicyConfigManager
 from family_linux.audit.logger import AuditLogger
 
@@ -46,6 +47,7 @@ class SystemProvisioner:
         self.browser = BrowserPolicyManager(self.adapter)
         self.apparmor = AppArmorManager(self.adapter)
         self.app_guard = AppGuard(self.adapter, self.audit)
+        self.web_gateway = WebGateway(self.adapter)
 
     def apply_policy(self, policy: FamilyPolicy, reason: str = "Provisioning baseline") -> Dict[str, Any]:
         """Validates, records, and applies the policy across all system layers.
@@ -110,18 +112,16 @@ class SystemProvisioner:
         dns_servers = self.dns_filter.configure_provider(dns_prov)
         results["actions"].append(f"DNS filter configured ({dns_prov}: {', '.join(dns_servers)})")
 
-        all_blocked_domains: set[str] = set()
-        for child in policy.children:
-            all_blocked_domains.update(child.web_filter.blocked_domains)
-        skipped_wildcards = self.dns_filter.update_hosts_blocklist(list(all_blocked_domains))
-        results["actions"].append(f"Domain blocklist updated ({len(all_blocked_domains)} domains)")
-        if skipped_wildcards:
-            results["warnings"].append(
-                f"Wildcard block rules cannot be enforced by /etc/hosts and were skipped: {', '.join(sorted(skipped_wildcards))}"
-            )
+        # Per-child web rules are enforced by the DNS gateway. Clear any machine-wide hosts block
+        # left by earlier versions, because it would also block the parent.
+        self.dns_filter.update_hosts_blocklist([])
 
-        # 5. Apply Managed Browser policies
-        # Use strictest child policy or default
+        # 4b. Per-child DNS gateway: blocks, allows, and request logging for each child
+        for warning in self.web_gateway.apply(policy):
+            results["warnings"].append(warning)
+        results["actions"].append(f"Per-child web filter applied to {len(policy.children)} child account(s)")
+
+        # 5. Apply Managed Browser policies (security settings only; URL rules are per child above)
         if policy.children:
             ref_child = policy.children[0]
             self.browser.apply_browser_policies(ref_child.web_filter)
