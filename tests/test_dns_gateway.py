@@ -334,3 +334,19 @@ def test_ipv6_route_detection_reads_default_route(monkeypatch):
 
     assert has_ipv6_route(FakeAdapter("default via 2001:db8::1 dev eth0 proto ra")) is True
     assert has_ipv6_route(FakeAdapter("")) is False
+
+
+def test_https_record_address_hints_are_learned():
+    """Browsers connect to ipv4hint and ipv6hint addresses from an HTTPS record directly."""
+    query = make_query("example.com", qtype=65)
+    rdata = (
+        struct.pack("!H", 1) + b"\x00"  # priority 1, target "." (root)
+        + struct.pack("!HH", 1, 2) + b"h2"  # alpn
+        + struct.pack("!HH", 4, 8) + bytes([104, 20, 23, 154, 172, 66, 147, 243])  # ipv4hint
+        + struct.pack("!HH", 6, 16) + bytes.fromhex("2606470010000000000000006814179a")  # ipv6hint
+    )
+    reply = query[:2] + struct.pack("!H", 0x8180) + struct.pack("!HHHH", 1, 1, 0, 0) + query[12:]
+    reply += b"\xc0\x0c" + struct.pack("!HHIH", 65, 1, 300, len(rdata)) + rdata
+    assert gw.parse_answer_addresses(reply) == [
+        ("104.20.23.154", 300), ("172.66.147.243", 300), ("2606:4700:1000::6814:179a", 300),
+    ]

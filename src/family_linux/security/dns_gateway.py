@@ -231,8 +231,31 @@ def _skip_name(packet: bytes, pos: int) -> int:
         pos += 1 + length
 
 
+def _svcb_address_hints(rdata: bytes) -> List[str]:
+    """Addresses from the ipv4hint and ipv6hint parameters of an HTTPS or SVCB record (RFC 9460).
+
+    Browsers connect to these addresses directly, so they must be learned like A and AAAA answers.
+    The target name is never compressed in SVCB, so it is skipped as plain labels.
+    """
+    found: List[str] = []
+    pos = 2  # SvcPriority
+    while rdata[pos] != 0:  # TargetName, uncompressed labels
+        pos += 1 + rdata[pos]
+    pos += 1
+    while pos + 4 <= len(rdata):
+        key, length = struct.unpack("!HH", rdata[pos:pos + 4])
+        pos += 4
+        value = rdata[pos:pos + length]
+        pos += length
+        if key == 4 and len(value) % 4 == 0:  # ipv4hint
+            found += [socket.inet_ntop(socket.AF_INET, value[i:i + 4]) for i in range(0, len(value), 4)]
+        elif key == 6 and len(value) % 16 == 0:  # ipv6hint
+            found += [socket.inet_ntop(socket.AF_INET6, value[i:i + 16]) for i in range(0, len(value), 16)]
+    return found
+
+
 def parse_answer_addresses(reply: bytes) -> List[Tuple[str, int]]:
-    """Returns (address, ttl) for every A and AAAA record in a successful reply.
+    """Returns (address, ttl) for every A, AAAA, and HTTPS/SVCB address hint in a successful reply.
 
     Malformed replies yield whatever was read before the error, so a bad reply never
     stops the resolver.
@@ -255,6 +278,8 @@ def parse_answer_addresses(reply: bytes) -> List[Tuple[str, int]]:
                 found.append((socket.inet_ntop(socket.AF_INET, rdata), ttl))
             elif rtype == 28 and rdlength == 16:
                 found.append((socket.inet_ntop(socket.AF_INET6, rdata), ttl))
+            elif rtype in (64, 65) and rdlength >= 3:  # SVCB, HTTPS
+                found.extend((address, ttl) for address in _svcb_address_hints(rdata))
     except (IndexError, struct.error, OSError, ValueError):
         pass
     return found
