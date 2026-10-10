@@ -65,7 +65,7 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | Module | Role | Key names |
 |--------|------|-----------|
 | `__init__.py` | Package version | `__version__` |
-| `models.py` | Data model and policy rules: accounts, age tiers, time limits, web filter, app policy, security baseline. Holds the constants for DNS servers, default app lists, always-blocked commands, and the minimum password length. Passwords are held in memory only and are excluded from `to_dict()`. | `FamilyPolicy`, `ParentAccount`, `ChildAccount`, `SecurityPolicy`, `AgeTier`, `DNSProvider`, `MIN_PASSWORD_LENGTH`, `DEFAULT_APPROVED_APPS`, `ALWAYS_BLOCKED_COMMANDS` |
+| `models.py` | Data model and policy rules: accounts, age tiers, time limits, web filter, app policy, security baseline. Holds the constants for DNS servers, default app lists, always-blocked commands, and the password rules (child minimum length; parent rules). Passwords are held in memory only and are excluded from `to_dict()`. | `FamilyPolicy`, `ParentAccount`, `ChildAccount`, `SecurityPolicy`, `AgeTier`, `DNSProvider`, `MIN_PASSWORD_LENGTH`, `MIN_PARENT_PASSWORD_LENGTH`, `parent_password_problems`, `DEFAULT_APPROVED_APPS`, `ALWAYS_BLOCKED_COMMANDS` |
 | `config.py` | Load, save (atomic, `0600`), back up, and restore the policy YAML | `PolicyConfigManager` |
 | `audit/logger.py` | Append-only JSON-lines audit log with read and filter | `AuditLogger`, `AuditRecord` |
 | `installer/wizard.py` | Installer state machine and the 12 steps. Non-interactive mode builds the policy from flags. | `InstallerWizard` |
@@ -89,6 +89,7 @@ Each manager takes a `SystemAdapter`, so the same code path runs in simulation.
 | `browser.py` | Generates and writes Firefox and Chromium managed policies | `BrowserPolicyManager` |
 | `apparmor.py` | Writes and loads the `family-linux-child` profile | `AppArmorManager`, `CHILD_SESSION_PROFILE` |
 | `app_guard.py` | Scans `.desktop` files and writes `NoDisplay=true` overrides for unapproved apps in child home | `AppGuard` |
+| `password_policy.py` | Managed PAM block in `/etc/pam.d/passwd`: `pam_pwquality` for the parent (14+ characters, all four classes) on every `passwd` change, with children exempted by name | `ParentPasswordRules`, `render_pam_block`, `insert_block`, `block_in_place` |
 
 ### Runtime paths
 
@@ -106,6 +107,7 @@ Paths are chosen at runtime. The first set is used when running as root or when 
 | AppArmor profile | `/etc/apparmor.d/family-linux-child` | (none) |
 | DNS drop-in | `/etc/systemd/resolved.conf.d/family-linux-dns.conf` | (none) |
 | Sudoers drop-in | `/etc/sudoers.d/family-linux-admin` | (none) |
+| Parent password rules (PAM) | `/etc/pam.d/passwd` (managed block) | (none) |
 
 Note: `SystemAdapter` treats any non-Linux host as dry-run, so on macOS every system write is simulated and nothing is changed.
 
@@ -123,6 +125,7 @@ Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. R
 | `test_screentime.py` | Usage tracking, quota and curfew evaluation, one enforcement cycle |
 | `test_security.py` | Security managers in simulation; dry-run reaches policy and audit writers |
 | `test_dashboard.py` | Live HTTP server: token auth, cookie and redirect, Host and Origin checks, JSON and size rules, password length |
+| `test_password_policy.py` | PAM block layout, child exemption by name, idempotent insertion, dry run |
 | `test_secrets.py` | Passwords never serialised, never in repr, dropped from files on next save |
 | `test_provisioning.py` | Save-before-apply ordering and the `ProvisioningError` message |
 | `integration/test_linux_provisioning.py` | Real accounts, sudoers, and UFW. Root on Linux with `FAMILY_LINUX_INTEGRATION=1` only; skipped elsewhere |

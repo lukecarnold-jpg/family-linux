@@ -68,7 +68,7 @@ case "$COMMAND" in
         ;;
     autoinstall)
         OUT_FILE="${1:-autoinstall-user-data.yaml}"
-        : "${PARENT_PASS:?Set PARENT_PASS to the parent password (min 8 characters)}"
+        : "${PARENT_PASS:?Set PARENT_PASS to the parent password (min 14 characters, with upper-case, lower-case, a number and a special character)}"
         python3 -m family_linux.installer.wizard --non-interactive --export-autoinstall "$OUT_FILE" \
             --parent-pass "$PARENT_PASS"
         echo "Ubuntu Subiquity autoinstall user-data generated at: $OUT_FILE"

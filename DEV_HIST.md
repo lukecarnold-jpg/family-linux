@@ -89,7 +89,7 @@ Session 2 worked through the gap list from the second review. Each item below re
 
 - `ParentAccount.password` and `ChildAccount.password` are `repr=False` and are excluded from `FamilyPolicy.to_dict()`. The policy file and the API never contain them.
 - Policies loaded from older files still work. The plaintext values are used for provisioning, and the next save removes them. `tests/test_secrets.py` covers this.
-- Installer: defaults removed. Prompts use `getpass`. Non-interactive runs require `--parent-pass` (min 8 characters). The child spec needs a password, and `split(":", 3)` keeps colons inside passwords.
+- Installer: defaults removed. Prompts use `getpass`. Non-interactive runs require `--parent-pass`. The parent rule is at least 14 characters with an upper-case letter, a lower-case letter, a number and a special character (Session 13). The child spec needs a password, and `split(":", 3)` keeps colons inside passwords.
 - `build-autoinstall-iso.sh`, `bootstrap-prototype.sh autoinstall`, and the CI smoke test now require `PARENT_PASS`.
 
 ### E. Honest `verify` (done)
@@ -348,6 +348,43 @@ Decision on option 2 (Session 9 rule: build it if the measured weakness is signi
 Still not measured:
 - A real ECH connection (no site in the runs used one).
 - Long sessions (HTTP/2 connections held for minutes), beyond the regression test.
+
+## Session 13: parent password policy
+
+Requirement from the user: the parent password must be at least 14 characters and include an upper-case letter, a lower-case letter, a number and a special character.
+
+- `models.py`: `MIN_PARENT_PASSWORD_LENGTH = 14` and `parent_password_problems()`. Character classes are ASCII (`A-Z`, `a-z`, `0-9`, `string.punctuation`), so accented letters do not count as special characters. The function returns the rules a password fails, and the messages never echo the password.
+- Enforced where the parent password is set: the interactive installer (step 5 retries until it complies) and the non-interactive flags (`install --non-interactive`, `autoinstall`, and `build-autoinstall-iso.sh`, which all go through the same parser).
+- Not enforced in `ParentAccount.validate()`. Policy loads call `validate()` (`config.py`), and an older install with a shorter parent password in its file would then fail to load.
+- Child passwords keep the 8-character minimum.
+- Tests: `tests/test_models.py` (each rule, boundary length, non-ASCII) and `tests/test_installer.py` (non-interactive rejection and acceptance, interactive retry). 130 passed, 4 skipped locally.
+
+**Gap (closed in Session 14):** the rule applied only when the installer set the password.
+
+## Session 14: parent password rules on every password change
+
+Requirement from the user: the parent's rules must also apply when the parent changes or resets the password, not only at install time.
+
+Mechanism: the PAM `passwd` service, which `passwd`, `sudo passwd` and desktop password dialogs all use.
+- `security/password_policy.py` writes a managed block to `/etc/pam.d/passwd`, before `@include common-password`. It has one `pam_succeed_if` line per child and then `pam_pwquality.so` (`minlen=14`, one upper, one lower, one digit, one other character; `enforce_for_root`).
+- Children are named with `user = NAME`. The first version used `ingroup family-children`, but `ingroup` checks the caller's groups, not the account being changed. Root setting a child's password was then held to the parent rules. The Docker run below showed this, and a unit test now checks that the block has no `ingroup`.
+- The block is regenerated on every apply, so child add and remove are covered. Usernames are checked against the account-name pattern before they are written.
+- `libpam-pwquality` is installed with apt if missing. If it cannot be installed, the warning is recorded.
+- `family-ctl verify` has a new live check, "Parent password rules enforced by PAM".
+
+Evidence (Ubuntu 24.04 container, real `passwd` in a pty, scripts kept in the scratchpad):
+- Parent changes own password to `Weak1!`: refused (shorter than 14).
+- Parent changes to 14+ characters with no special character: refused.
+- Parent changes to `Correct-Horse-42-Battery`: accepted.
+- Root runs `passwd parent` with a weak password: refused.
+- Root runs `passwd kid` with `abc`: accepted (child exempt). Child changes own password: accepted.
+- A child still gets Ubuntu's default 8-character check (from `common-password`). That is unchanged by this session, and a 1-character child password is still refused.
+- `tests/integration/test_linux_provisioning.py::test_parent_password_rules_refuse_a_weak_change` passes as root in the same container (`FAMILY_LINUX_INTEGRATION=1`, `pamtester`). The `linux-integration` CI job installs `pamtester` and `libpam-pwquality`, so the test runs there instead of skipping.
+
+Limits:
+- `ocredit` counts any non-alphanumeric character, including a space. The installer's check (ASCII punctuation only) is stricter, so the two differ only for a space as the special character.
+- Only the `passwd` PAM service is covered. `chpasswd` (used by the provisioner) and any other PAM service are not.
+- Ubuntu's stock `pam_pwquality` settings for children remain as they were.
 
 ## Open items, in priority order
 

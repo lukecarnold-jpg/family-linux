@@ -1,5 +1,6 @@
 """Tests for Family Linux interactive installer and Subiquity autoinstall generator."""
 
+import itertools
 from pathlib import Path
 import pytest
 import yaml
@@ -69,3 +70,41 @@ def test_subiquity_autoinstall_generator():
     late_cmds = auto["late-commands"]
     assert any("family-children" in cmd for cmd in late_cmds)
     assert any("ufw --force enable" in cmd for cmd in late_cmds)
+
+
+def test_non_interactive_install_rejects_weak_parent_password(monkeypatch, capsys):
+    from family_linux.installer import wizard as wizard_module
+
+    for weak in ["Short1!", "alllowercase1!", "NoDigitsHere!!", "NoSpecialChar123", "nouppercase123!"]:
+        monkeypatch.setattr("sys.argv", ["family-installer", "--dry-run", "--non-interactive", "--parent-pass", weak])
+        with pytest.raises(SystemExit) as exc:
+            wizard_module.main()
+        assert "--parent-pass" in str(exc.value)
+        assert weak not in str(exc.value)  # the message never echoes the password
+
+
+def test_non_interactive_install_accepts_a_compliant_parent_password(monkeypatch, tmp_path):
+    from family_linux.installer import wizard as wizard_module
+
+    out = tmp_path / "user-data"
+    monkeypatch.setattr("sys.argv", [
+        "family-installer", "--dry-run", "--non-interactive", "--export-autoinstall", str(out),
+        "--parent-pass", "Correct-Horse-42",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        wizard_module.main()
+    assert exc.value.code == 0
+    assert out.exists()
+
+
+def test_interactive_parent_step_retries_until_password_complies(monkeypatch):
+    wizard = InstallerWizard(dry_run=True, interactive=True)
+    answers = itertools.cycle(["parent", "Parent Admin"])
+    passwords = iter(["short1!", "LongEnoughButNoSymbol1", "Long-Enough-Password1"])
+    monkeypatch.setattr(wizard, "prompt", lambda text, default=None: next(answers))
+    monkeypatch.setattr(wizard, "secret_prompt", lambda text: next(passwords))
+
+    wizard.run_step_5_parent_account()
+
+    assert wizard.parent is not None
+    assert wizard.parent.password == "Long-Enough-Password1"
