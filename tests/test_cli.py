@@ -1,12 +1,15 @@
 """Tests for family-ctl administration command-line interface."""
 
 import argparse
+import platform
 from pathlib import Path
 import pytest
 
+from family_linux.audit.logger import AuditLogger
 from family_linux.cli.family_ctl import FamilyCtl
 from family_linux.config import PolicyConfigManager
 from family_linux.models import FamilyPolicy, ParentAccount, ChildAccount, AgeTier
+from family_linux.screentime.tracker import ScreenTimeTracker
 
 
 @pytest.fixture
@@ -18,7 +21,16 @@ def test_ctl(tmp_path: Path):
     policy = FamilyPolicy(parent=parent, children=[child])
     mgr.save_policy(policy)
 
-    return FamilyCtl(config_path=str(cfg_file), dry_run=False)
+    ctl = FamilyCtl(config_path=str(cfg_file), dry_run=False)
+    # Keep tests off the real system even when run as root on Linux: simulate system
+    # commands and file writes, and send usage and audit data to the temp directory.
+    ctl.adapter.dry_run = True
+    ctl.tracker = ScreenTimeTracker(usage_file=tmp_path / "usage.json")
+    audit = AuditLogger(log_path=tmp_path / "audit.log")
+    ctl.audit = audit
+    ctl.provisioner.audit = audit
+    ctl.provisioner.app_guard.audit = audit
+    return ctl
 
 
 def test_cli_status(test_ctl: FamilyCtl, capsys):
@@ -29,10 +41,13 @@ def test_cli_status(test_ctl: FamilyCtl, capsys):
     assert "alice" in captured
 
 
-def test_cli_verify(test_ctl: FamilyCtl, capsys):
+@pytest.mark.skipif(platform.system() == "Linux", reason="live checks run on Linux; this test covers other hosts")
+def test_cli_verify_is_incomplete_off_linux(test_ctl: FamilyCtl, capsys):
     test_ctl.cmd_verify()
     captured = capsys.readouterr().out
-    assert "[SUCCESS] System complies 100%" in captured
+    assert "[INCOMPLETE]" in captured
+    assert "[SUCCESS]" not in captured
+    assert "[SKIP]" in captured
 
 
 def test_cli_user_add_disable_enable(test_ctl: FamilyCtl):
@@ -42,7 +57,7 @@ def test_cli_user_add_disable_enable(test_ctl: FamilyCtl):
         username="benny",
         name="Benny Arnold",
         tier="pre_teen",
-        password="Pass",
+        password="PassWord1",
     )
     test_ctl.cmd_user(args_add)
     policy = test_ctl.config_manager.load_policy()

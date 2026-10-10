@@ -17,7 +17,7 @@ PROFILE_PATH = APPARMOR_DIR / "family-linux-child"
 CHILD_SESSION_PROFILE = """# AppArmor profile for Family Linux child session confinement
 #include <tunables/global>
 
-profile family-linux-child flags=(attach_disconnected,complain) {
+profile family-linux-child flags=(attach_disconnected) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/user-tmp>

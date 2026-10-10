@@ -7,12 +7,15 @@ web filtering, audit logs, and security verification.
 from __future__ import annotations
 
 import argparse
+import platform
+import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from family_linux.config import PolicyConfigManager
 from family_linux.models import (
+    MIN_PASSWORD_LENGTH,
     FamilyPolicy,
     ChildAccount,
     AgeTier,
@@ -23,6 +26,9 @@ from family_linux.provisioner.system import SystemProvisioner
 from family_linux.screentime.tracker import ScreenTimeTracker
 from family_linux.audit.logger import AuditLogger
 from family_linux.security.adapter import SystemAdapter
+from family_linux.security.apparmor import PROFILE_PATH
+from family_linux.security.browser import CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
+from family_linux.security.users import SUDOERS_FILE
 
 
 def format_table(headers: List[str], rows: List[List[str]]) -> str:
@@ -42,6 +48,14 @@ def format_table(headers: List[str], rows: List[List[str]]) -> str:
         lines.append(r_line)
     lines.append(sep)
     return "\n".join(lines)
+
+
+def _probe(cmd: List[str]) -> Optional[subprocess.CompletedProcess]:
+    """Runs a read-only check command. Returns None when the tool is not installed."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        return None
 
 
 class FamilyCtl:
@@ -107,6 +121,9 @@ class FamilyCtl:
             print(format_table(headers, rows))
 
         elif args.user_action == "add":
+            if args.password is not None and len(args.password) < MIN_PASSWORD_LENGTH:
+                print(f"[ERROR] Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+                sys.exit(1)
             tier = args.tier or AgeTier.PRE_TEEN.value
             child = ChildAccount.create(
                 username=args.username,
@@ -243,9 +260,12 @@ class FamilyCtl:
             prov = policy.children[0].web_filter.dns_provider if policy.children else "cleanbrowsing_family"
             print("Web Safety & DNS Protection:")
             print(f"  DNS Provider:     {prov}")
-            print(f"  SafeSearch:       ENFORCED (Google, Bing, DuckDuckGo, YouTube)")
-            print(f"  Incognito Mode:   BLOCKED")
-            print(f"  Browser DevTools: DISABLED")
+            safe = bool(policy.children) and all(c.web_filter.safe_search_enforced for c in policy.children)
+            incognito = bool(policy.children) and all(c.web_filter.block_incognito for c in policy.children)
+            devtools = bool(policy.children) and all(c.web_filter.disable_developer_tools for c in policy.children)
+            print(f"  SafeSearch:       {'ENFORCED' if safe else 'NOT ENFORCED'} (Google, Bing, DuckDuckGo, YouTube)")
+            print(f"  Incognito Mode:   {'BLOCKED' if incognito else 'ALLOWED'}")
+            print(f"  Browser DevTools: {'DISABLED' if devtools else 'ENABLED'}")
             all_blocked = set()
             for c in policy.children:
                 all_blocked.update(c.web_filter.blocked_domains)
@@ -309,39 +329,94 @@ class FamilyCtl:
             print(f"[OK] Successfully restored policy from {args.file}")
 
     def cmd_verify(self) -> None:
+        """Checks the baseline. Live checks read real system state on Linux and are SKIPPED elsewhere."""
         policy = self.config_manager.load_policy()
         print("Auditing Family Linux Security Baseline...")
 
-        checks = []
-        # 1. Single parent check
+        results: List[Tuple[str, str, str]] = []  # (check name, PASS | FAIL | SKIP, note)
+
+        def record(name: str, ok: bool, note: str) -> None:
+            results.append((name, "PASS" if ok else "FAIL", note))
+
+        def skip(name: str, note: str) -> None:
+            results.append((name, "SKIP", note))
+
+        # Policy model checks (always available)
         errors = policy.validate()
-        checks.append(("Architecture policy model validation", len(errors) == 0, "; ".join(errors)))
-
-        # 2. Child accounts have no sudo
+        record("Architecture policy model validation", not errors, "; ".join(errors) or "one parent, non-admin children")
         child_sudo = [c.username for c in policy.children if c.sudo_access]
-        checks.append(("Child accounts barred from sudo privileges", len(child_sudo) == 0, f"Violations: {child_sudo}"))
+        record("Child accounts barred from sudo privileges", not child_sudo, f"Violations: {child_sudo}" if child_sudo else "none")
+        record(
+            "Firewall default incoming deny (policy)",
+            policy.security.firewall_default == "deny_incoming",
+            policy.security.firewall_default,
+        )
 
-        # 3. Sudoers file integrity
-        checks.append(("Exclusive parent sudoers configuration active", True, f"Parent: {policy.parent.username}"))
-
-        # 4. Firewall policy
-        checks.append(("Firewall default incoming deny", policy.security.firewall_default == "deny_incoming", "UFW deny incoming"))
-
-        # 5. Browser policy
-        checks.append(("Managed browser lockdown active", True, "SafeSearch & Incognito lockdown"))
-
-        all_ok = True
-        for name, passed, note in checks:
-            status = "[PASS]" if passed else "[FAIL]"
-            if not passed:
-                all_ok = False
-            print(f"  {status} {name}: {note}")
-
-        if all_ok:
-            print("\n[SUCCESS] System complies 100% with Family Linux security and policy baseline.")
+        # Live checks: only meaningful on the machine the policy is applied to
+        if platform.system() != "Linux":
+            for name in (
+                "Parent sudoers drop-in present and valid",
+                "UFW active with deny incoming",
+                "Firefox managed policy installed",
+                "Chromium managed policy installed",
+                "AppArmor child profile loaded in enforce mode",
+                "Unattended security updates enabled",
+            ):
+                skip(name, "live check runs only on Linux")
         else:
-            print("\n[WARNING] Security compliance issues detected.")
+            sudoers = Path(SUDOERS_FILE)
+            sudoers_ok = sudoers.exists() and f"{policy.parent.username} ALL" in sudoers.read_text()
+            record("Parent sudoers drop-in present", sudoers_ok, str(sudoers))
+            if sudoers.exists():
+                syntax = _probe(["visudo", "-cf", str(sudoers)])
+                if syntax is None:
+                    record("Sudoers drop-in syntax valid", False, "visudo not installed")
+                else:
+                    record("Sudoers drop-in syntax valid", syntax.returncode == 0, (syntax.stderr or syntax.stdout).strip())
+            else:
+                skip("Sudoers drop-in syntax valid", "drop-in missing")
+
+            ufw = _probe(["ufw", "status", "verbose"])
+            ufw_ok = bool(ufw and ufw.returncode == 0 and "Status: active" in ufw.stdout and "deny (incoming)" in ufw.stdout)
+            record("UFW active with deny incoming", ufw_ok, "ufw status verbose" if ufw else "ufw not installed")
+
+            for label, path in (("Firefox", FIREFOX_POLICY_PATH), ("Chromium", CHROMIUM_POLICY_PATH)):
+                record(f"{label} managed policy installed", path.exists(), str(path))
+
+            # Loaded and enforcing, as reported by the kernel, not just present on disk.
+            aa = _probe(["aa-status"])
+            if aa is None:
+                record("AppArmor child profile loaded in enforce mode", False, "aa-status not installed")
+            elif aa.returncode != 0:
+                record("AppArmor child profile loaded in enforce mode", False, "AppArmor not active (aa-status failed)")
+            else:
+                enforce_section = aa.stdout.split("complain mode", 1)[0]
+                loaded = "family-linux-child" in enforce_section
+                record(
+                    "AppArmor child profile loaded in enforce mode",
+                    loaded,
+                    "active in enforce mode" if loaded else "not loaded in enforce mode",
+                )
+
+            updates = _probe(["systemctl", "is-enabled", "unattended-upgrades"])
+            if updates is None:
+                record("Unattended security updates enabled", False, "systemctl not available")
+            else:
+                state = updates.stdout.strip() or "not enabled"
+                record("Unattended security updates enabled", state == "enabled", state)
+
+        for name, status, note in results:
+            print(f"  [{status}] {name}: {note}")
+
+        failed = [r for r in results if r[1] == "FAIL"]
+        skipped = [r for r in results if r[1] == "SKIP"]
+        if failed:
+            print(f"\n[FAIL] {len(failed)} baseline check(s) failed.")
             sys.exit(1)
+        if skipped:
+            print(f"\n[INCOMPLETE] All checks that ran passed; {len(skipped)} live check(s) were skipped on this host.")
+        else:
+            print("\n[SUCCESS] All baseline checks passed.")
 
 
 def main() -> None:

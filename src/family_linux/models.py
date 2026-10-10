@@ -13,6 +13,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 import re
 
+MIN_PASSWORD_LENGTH = 8
+
 
 class AgeTier(str, Enum):
     YOUNG_CHILD = "young_child"  # Under 10: high protection, 90m limit, 8:00 PM curfew
@@ -171,7 +173,8 @@ class AppPolicy:
 class ParentAccount:
     username: str
     full_name: str
-    password: Optional[str] = None
+    # In memory only: used to set the password, never written to policy files.
+    password: Optional[str] = field(default=None, repr=False)
     role: str = "local_admin"
     sudo_access: bool = True
     shell: str = "/bin/bash"
@@ -192,7 +195,8 @@ class ChildAccount:
     username: str
     full_name: str
     age_tier: str = AgeTier.PRE_TEEN.value
-    password: Optional[str] = None
+    # In memory only: used to set the password, never written to policy files.
+    password: Optional[str] = field(default=None, repr=False)
     enabled: bool = True
     role: str = "standard_user"
     sudo_access: bool = False
@@ -271,7 +275,12 @@ class FamilyPolicy:
         return errors
 
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        """Serialises the policy for storage and the API. Passwords are never included."""
+        data = asdict(self)
+        data["parent"].pop("password", None)
+        for child in data["children"]:
+            child.pop("password", None)
+        return data
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> FamilyPolicy:

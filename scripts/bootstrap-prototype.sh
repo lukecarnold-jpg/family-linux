@@ -33,7 +33,7 @@ Commands:
   policyd --one-shot Run a single curfew enforcement cycle
   verify            Verify system compliance against Family Linux security baseline
   test              Run the automated test suite with pytest
-  autoinstall FILE  Export Ubuntu Subiquity autoinstall user-data configuration
+  autoinstall FILE  Export Ubuntu Subiquity autoinstall user-data (needs PARENT_PASS env var)
 
 Examples:
   ./scripts/bootstrap-prototype.sh install --dry-run
@@ -44,7 +44,7 @@ Examples:
 EOF
 }
 
-COMMAND="${1:-install}"
+COMMAND="${1:-help}"
 shift || true
 
 case "$COMMAND" in
@@ -68,7 +68,9 @@ case "$COMMAND" in
         ;;
     autoinstall)
         OUT_FILE="${1:-autoinstall-user-data.yaml}"
-        python3 -m family_linux.installer.wizard --non-interactive --export-autoinstall "$OUT_FILE"
+        : "${PARENT_PASS:?Set PARENT_PASS to the parent password (min 8 characters)}"
+        python3 -m family_linux.installer.wizard --non-interactive --export-autoinstall "$OUT_FILE" \
+            --parent-pass "$PARENT_PASS"
         echo "Ubuntu Subiquity autoinstall user-data generated at: $OUT_FILE"
         ;;
     help|--help|-h)

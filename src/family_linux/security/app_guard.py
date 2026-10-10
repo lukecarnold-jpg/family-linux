@@ -25,7 +25,7 @@ class AppGuard:
 
     def __init__(self, adapter: Optional[SystemAdapter] = None, audit_logger: Optional[AuditLogger] = None):
         self.adapter = adapter or SystemAdapter()
-        self.audit = audit_logger or AuditLogger()
+        self.audit = audit_logger or AuditLogger(dry_run=self.adapter.dry_run)
 
     def is_app_allowed(self, child: ChildAccount, binary_or_app_name: str) -> bool:
         """Determines if a command or application is permitted for a child."""

@@ -102,3 +102,13 @@ def test_app_guard_blocks_blacklisted_and_unapproved():
 
     # Should block unapproved application in allow-list mode
     assert guard.is_app_allowed(child, "steam") is False
+
+
+def test_dry_run_propagates_to_policy_and_audit_writers():
+    """A simulated provisioner must not write policy or audit files, even on a real Linux host."""
+    from family_linux.provisioner.system import SystemProvisioner
+
+    provisioner = SystemProvisioner(adapter=SystemAdapter(dry_run=True))
+    assert provisioner.config_manager.dry_run is True
+    assert provisioner.audit.dry_run is True
+    assert provisioner.app_guard.audit.dry_run is True

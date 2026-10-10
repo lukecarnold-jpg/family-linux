@@ -15,10 +15,12 @@ mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
 
 USER_DATA_FILE="${BUILD_DIR}/user-data"
 echo "Generating Family Linux autoinstall configuration..."
+: "${PARENT_PASS:?Set PARENT_PASS to the parent password (min 8 characters)}"
 PYTHONPATH="${PROJECT_ROOT}/src" python3 -m family_linux.installer.wizard \
     --non-interactive \
     --parent-user "parent" \
     --parent-name "Family Administrator" \
+    --parent-pass "$PARENT_PASS" \
     --export-autoinstall "$USER_DATA_FILE"
 
 cat <<EOF

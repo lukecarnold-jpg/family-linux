@@ -18,6 +18,7 @@ Implements the 12-step installation flow specified in docs/installer.md:
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
@@ -29,8 +30,9 @@ from family_linux.models import (
     SecurityPolicy,
     AgeTier,
     DNSProvider,
+    MIN_PASSWORD_LENGTH,
 )
-from family_linux.provisioner.system import SystemProvisioner
+from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
 from family_linux.provisioner.autoinstall import SubiquityAutoinstallGenerator
 from family_linux.security.adapter import SystemAdapter
 
@@ -63,6 +65,16 @@ class InstallerWizard:
         try:
             val = input(f"{text}{suffix}: ").strip()
             return val if val else (default or "")
+        except (EOFError, KeyboardInterrupt):
+            print("\nInstallation aborted.")
+            sys.exit(1)
+
+    def secret_prompt(self, text: str) -> str:
+        """Prompts for a password without echoing it. Passwords never have defaults."""
+        if not self.interactive:
+            return ""
+        try:
+            return getpass.getpass(f"{text}: ")
         except (EOFError, KeyboardInterrupt):
             print("\nInstallation aborted.")
             sys.exit(1)
@@ -128,7 +140,7 @@ class InstallerWizard:
         while True:
             username = self.prompt("Parent username", "parent")
             full_name = self.prompt("Parent full name", "Family Administrator")
-            password = self.prompt("Parent password (min 6 characters)", "FamilyPass123!")
+            password = self.secret_prompt(f"Parent password (min {MIN_PASSWORD_LENGTH} characters)")
 
             parent = ParentAccount(
                 username=username,
@@ -141,8 +153,8 @@ class InstallerWizard:
             if errors:
                 print(f"Validation error: {'; '.join(errors)}")
                 continue
-            if len(password) < 6:
-                print("Password too short: please enter at least 6 characters.")
+            if len(password) < MIN_PASSWORD_LENGTH:
+                print(f"Password too short: please enter at least {MIN_PASSWORD_LENGTH} characters.")
                 continue
 
             self.parent = parent
@@ -165,7 +177,10 @@ class InstallerWizard:
             tier_pick = self.prompt_choice("Select age preset tier", tier_options, tier_options[1])
             tier_val = tier_pick.split()[0]
 
-            password = self.prompt("Child password", "ChildPass123!")
+            password = self.secret_prompt(f"Child password (min {MIN_PASSWORD_LENGTH} characters)")
+            while len(password) < MIN_PASSWORD_LENGTH:
+                print(f"Password too short: please enter at least {MIN_PASSWORD_LENGTH} characters.")
+                password = self.secret_prompt(f"Child password (min {MIN_PASSWORD_LENGTH} characters)")
 
             child = ChildAccount.create(
                 username=username,
@@ -251,7 +266,11 @@ class InstallerWizard:
 
     def run_step_11_apply(self, policy: FamilyPolicy) -> Dict[str, Any]:
         print("\nStep 11: Applying Family Linux Configuration...")
-        result = self.provisioner.apply_policy(policy, reason="Initial installer setup")
+        try:
+            result = self.provisioner.apply_policy(policy, reason="Initial installer setup")
+        except ProvisioningError as exc:
+            print(f"\n[ERROR] {exc}")
+            sys.exit(1)
         print("\nActions applied:")
         for action in result["actions"]:
             print(f"  [OK] {action}")
@@ -304,16 +323,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Family Linux Interactive Installer")
     parser.add_argument("--dry-run", action="store_true", help="Simulate installation without modifying system files")
     parser.add_argument("--non-interactive", action="store_true", help="Run unattended with defaults")
+    parser.add_argument("--language", type=str, default="en_US.UTF-8", help="System locale (used for autoinstall export)")
+    parser.add_argument("--keyboard", type=str, default="us", help="Keyboard layout (used for autoinstall export)")
+    parser.add_argument("--target-disk", type=str, default=None, help="Target disk path, e.g. /dev/nvme0n1 (default: first disk the installer finds)")
     parser.add_argument("--parent-user", type=str, default="parent", help="Parent username")
     parser.add_argument("--parent-name", type=str, default="Family Administrator", help="Parent full name")
-    parser.add_argument("--parent-pass", type=str, default="FamilyPass123!", help="Parent password")
-    parser.add_argument("--child", action="append", help="Child account specification (format: username:fullname:tier:password)")
+    parser.add_argument("--parent-pass", type=str, default=None, help=f"Parent password (required with --non-interactive, min {MIN_PASSWORD_LENGTH} characters)")
+    parser.add_argument("--child", action="append", help="Child account specification (format: username:fullname:tier:password, password required)")
     parser.add_argument("--export-autoinstall", type=str, help="Export Ubuntu Subiquity autoinstall user-data YAML to file and exit")
     args = parser.parse_args()
 
     wizard = InstallerWizard(dry_run=args.dry_run, interactive=not args.non_interactive)
+    wizard.language = args.language
+    wizard.keyboard = args.keyboard
+    if args.target_disk:
+        wizard.target_disk = args.target_disk
 
     if args.non_interactive or args.export_autoinstall:
+        if not args.parent_pass or len(args.parent_pass) < MIN_PASSWORD_LENGTH:
+            sys.exit(f"Error: --parent-pass is required with --non-interactive and must be at least {MIN_PASSWORD_LENGTH} characters.")
         wizard.parent = ParentAccount(
             username=args.parent_user,
             full_name=args.parent_name,
@@ -323,18 +351,24 @@ def main() -> None:
         )
         if args.child:
             for c_spec in args.child:
-                parts = c_spec.split(":")
+                # maxsplit=3 keeps any ':' inside the password.
+                parts = c_spec.split(":", 3)
+                if len(parts) < 4 or len(parts[3]) < MIN_PASSWORD_LENGTH:
+                    sys.exit(f"Error: child spec '{parts[0]}' needs a password of at least {MIN_PASSWORD_LENGTH} characters (username:fullname:tier:password).")
                 u = parts[0]
-                fn = parts[1] if len(parts) > 1 else u.capitalize()
-                t = parts[2] if len(parts) > 2 else AgeTier.PRE_TEEN.value
-                p = parts[3] if len(parts) > 3 else "ChildPass123!"
-                wizard.children.append(ChildAccount.create(u, fn, t, p))
+                fn = parts[1] or u.capitalize()
+                t = parts[2] or AgeTier.PRE_TEEN.value
+                wizard.children.append(ChildAccount.create(u, fn, t, parts[3]))
 
         policy = wizard.run_step_9_validation()
 
         if args.export_autoinstall:
             gen = SubiquityAutoinstallGenerator(policy)
-            content = gen.generate_user_data()
+            content = gen.generate_user_data(
+                locale=wizard.language,
+                keyboard_layout=wizard.keyboard,
+                target_disk=args.target_disk,
+            )
             out_path = Path(args.export_autoinstall)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             with open(out_path, "w", encoding="utf-8") as f:

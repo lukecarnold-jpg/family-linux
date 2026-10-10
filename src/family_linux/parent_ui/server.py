@@ -7,13 +7,16 @@ without requiring command-line knowledge.
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
+import secrets
 import sys
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse, parse_qs
 
 from family_linux.config import PolicyConfigManager
@@ -22,8 +25,9 @@ from family_linux.models import (
     ChildAccount,
     AgeTier,
     DNSProvider,
+    MIN_PASSWORD_LENGTH,
 )
-from family_linux.provisioner.system import SystemProvisioner
+from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
 from family_linux.screentime.tracker import ScreenTimeTracker
 from family_linux.audit.logger import AuditLogger
 from family_linux.security.adapter import SystemAdapter
@@ -612,118 +616,234 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-class DashboardRequestHandler(BaseHTTPRequestHandler):
-    """Handles REST and page requests for the parent portal."""
+SESSION_COOKIE = "fl_session"
+MAX_BODY_BYTES = 64 * 1024
+DEFAULT_PORT = 8443
 
-    def __init__(self, *args, **kwargs):
-        self.config_manager = PolicyConfigManager()
-        self.adapter = SystemAdapter()
-        self.provisioner = SystemProvisioner(adapter=self.adapter, config_manager=self.config_manager)
-        self.tracker = ScreenTimeTracker()
-        self.audit = AuditLogger()
-        super().__init__(*args, **kwargs)
 
-    def _send_json(self, data: Any, status: int = HTTPStatus.OK) -> None:
-        payload = json.dumps(data).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(payload)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(payload)
+def make_handler(
+    config_manager: PolicyConfigManager,
+    provisioner: SystemProvisioner,
+    tracker: ScreenTimeTracker,
+    audit: AuditLogger,
+    token: str,
+    allowed_hosts: set[str],
+) -> type[BaseHTTPRequestHandler]:
+    """Builds a request handler bound to the given dependencies and access token.
 
-    def do_GET(self) -> None:
-        url = urlparse(self.path)
+    Dependencies are injected so tests can run against temporary policy files.
+    """
 
-        if url.path == "/" or url.path == "/index.html":
-            payload = HTML_TEMPLATE.encode("utf-8")
-            self.send_response(HTTPStatus.OK)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(payload)))
+    class DashboardRequestHandler(BaseHTTPRequestHandler):
+        """Serves the parent portal. Every request must present the access token."""
+
+        def _send(self, status: int, body: bytes, content_type: str, extra_headers: Optional[dict] = None) -> None:
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            for name, value in (extra_headers or {}).items():
+                self.send_header(name, value)
             self.end_headers()
-            self.wfile.write(payload)
+            self.wfile.write(body)
 
-        elif url.path == "/api/policy":
-            policy = self.config_manager.load_policy()
-            p_dict = policy.to_dict()
-            # Enrich children with live tracker data
-            for c_data in p_dict.get("children", []):
-                u = c_data.get("username", "")
-                c_data["used_today"] = self.tracker.get_minutes_used(u)
-            self._send_json(p_dict)
+        def _send_json(self, data: Any, status: int = HTTPStatus.OK) -> None:
+            self._send(status, json.dumps(data).encode("utf-8"), "application/json")
 
-        elif url.path == "/api/audit":
-            records = self.audit.get_records(limit=50)
-            self._send_json([r.__dict__ for r in records])
+        def _send_error_json(self, status: int, message: str) -> None:
+            self._send_json({"status": "error", "message": message}, status)
 
-        elif url.path == "/api/backups":
-            backups = self.config_manager.list_backups()
-            self._send_json([{"name": b.name, "path": str(b), "size": b.stat().st_size} for b in backups])
+        def _host_allowed(self) -> bool:
+            # Rejects DNS-rebinding requests where the Host header is not the loopback address.
+            return self.headers.get("Host", "") in allowed_hosts
 
-        else:
-            self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+        def _authorised(self) -> bool:
+            candidates = []
+            auth = self.headers.get("Authorization", "")
+            if auth.startswith("Bearer "):
+                candidates.append(auth[len("Bearer "):].strip())
+            cookie = SimpleCookie()
+            try:
+                cookie.load(self.headers.get("Cookie", ""))
+            except Exception:
+                pass
+            if SESSION_COOKIE in cookie:
+                candidates.append(cookie[SESSION_COOKIE].value)
+            return any(hmac.compare_digest(c, token) for c in candidates)
 
-    def do_POST(self) -> None:
-        url = urlparse(self.path)
-        length = int(self.headers.get("Content-Length", 0))
-        body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
+        def _origin_allowed(self) -> bool:
+            # Browsers send Origin on cross-site POSTs. Reject any origin that is not this dashboard.
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return True
+            return origin in {f"http://{h}" for h in allowed_hosts}
 
-        policy = self.config_manager.load_policy()
+        def _deny_unauthorised(self) -> None:
+            if urlparse(self.path).path.startswith("/api/"):
+                self._send_error_json(HTTPStatus.UNAUTHORIZED, "Authentication required.")
+            else:
+                self._send(
+                    HTTPStatus.UNAUTHORIZED,
+                    b"Authentication required. Open the link printed by the dashboard at startup.",
+                    "text/plain; charset=utf-8",
+                )
 
-        if url.path == "/api/child":
-            username = body.get("username", "")
-            fullname = body.get("fullname", username.capitalize())
-            tier = body.get("tier", AgeTier.PRE_TEEN.value)
-            pwd = body.get("password")
+        def do_GET(self) -> None:
+            if not self._host_allowed():
+                self._send_error_json(HTTPStatus.FORBIDDEN, "Host not allowed.")
+                return
 
-            child = ChildAccount.create(username, fullname, tier, pwd)
-            policy.children.append(child)
-            self.provisioner.apply_policy(policy, reason=f"Created child {username} via Web UI")
-            self._send_json({"status": "ok", "username": username})
+            url = urlparse(self.path)
 
-        elif url.path == "/api/child/toggle":
-            username = body.get("username")
-            enable = body.get("enable", True)
-            for c in policy.children:
-                if c.username == username:
-                    c.enabled = enable
-            self.provisioner.apply_policy(policy, reason=f"Toggled child {username} via Web UI")
-            self._send_json({"status": "ok"})
+            # Trade the one-time link token for an HttpOnly session cookie, then redirect so the
+            # token does not stay in the address bar or browser history.
+            query_token = parse_qs(url.query).get("token", [""])[0]
+            if url.path in ("/", "/index.html") and query_token and hmac.compare_digest(query_token, token):
+                cookie = f"{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/"
+                self._send(HTTPStatus.SEE_OTHER, b"", "text/plain", {"Location": "/", "Set-Cookie": cookie})
+                return
 
-        elif url.path == "/api/child/reset-usage":
-            username = body.get("username")
-            if username:
-                self.tracker.reset_usage(username)
-            self._send_json({"status": "ok"})
+            if not self._authorised():
+                self._deny_unauthorised()
+                return
 
-        elif url.path == "/api/web/block":
-            domain = body.get("domain", "")
-            for c in policy.children:
-                if domain and domain not in c.web_filter.blocked_domains:
-                    c.web_filter.blocked_domains.append(domain)
-            self.provisioner.apply_policy(policy, reason=f"Blocked domain {domain} via Web UI")
-            self._send_json({"status": "ok"})
+            if url.path in ("/", "/index.html"):
+                self._send(HTTPStatus.OK, HTML_TEMPLATE.encode("utf-8"), "text/html; charset=utf-8")
 
-        elif url.path == "/api/web/allow":
-            domain = body.get("domain", "")
-            for c in policy.children:
-                if domain in c.web_filter.blocked_domains:
-                    c.web_filter.blocked_domains.remove(domain)
-            self.provisioner.apply_policy(policy, reason=f"Allowed domain {domain} via Web UI")
-            self._send_json({"status": "ok"})
+            elif url.path == "/api/policy":
+                policy = config_manager.load_policy()
+                p_dict = policy.to_dict()
+                # Enrich children with live tracker data
+                for c_data in p_dict.get("children", []):
+                    c_data["used_today"] = tracker.get_minutes_used(c_data.get("username", ""))
+                self._send_json(p_dict)
 
-        elif url.path == "/api/backup":
-            path = self.config_manager.create_backup("web_ui")
-            self._send_json({"status": "ok", "backup": str(path)})
+            elif url.path == "/api/audit":
+                records = audit.get_records(limit=50)
+                self._send_json([r.__dict__ for r in records])
 
-        else:
-            self.send_error(HTTPStatus.NOT_FOUND, "Unknown action")
+            elif url.path == "/api/backups":
+                backups = config_manager.list_backups()
+                self._send_json([{"name": b.name, "path": str(b), "size": b.stat().st_size} for b in backups])
+
+            else:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "Not found.")
+
+        def do_POST(self) -> None:
+            if not self._host_allowed():
+                self._send_error_json(HTTPStatus.FORBIDDEN, "Host not allowed.")
+                return
+            if not self._authorised():
+                self._send_error_json(HTTPStatus.UNAUTHORIZED, "Authentication required.")
+                return
+            if not self._origin_allowed():
+                self._send_error_json(HTTPStatus.FORBIDDEN, "Cross-origin request rejected.")
+                return
+            # Requiring JSON means a plain HTML form cannot submit here without a preflight.
+            if not self.headers.get("Content-Type", "").startswith("application/json"):
+                self._send_error_json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/json.")
+                return
+
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            if length > MAX_BODY_BYTES:
+                self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request body too large.")
+                return
+            try:
+                body = json.loads(self.rfile.read(length).decode("utf-8")) if length > 0 else {}
+            except (ValueError, UnicodeDecodeError):
+                self._send_error_json(HTTPStatus.BAD_REQUEST, "Body must be valid JSON.")
+                return
+            if not isinstance(body, dict):
+                self._send_error_json(HTTPStatus.BAD_REQUEST, "Body must be a JSON object.")
+                return
+
+            url = urlparse(self.path)
+            policy = config_manager.load_policy()
+
+            try:
+                self._route_post(url.path, body, policy)
+            except ValueError as exc:
+                self._send_error_json(HTTPStatus.BAD_REQUEST, str(exc))
+            except ProvisioningError as exc:
+                self._send_error_json(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+        def _route_post(self, path: str, body: dict, policy: FamilyPolicy) -> None:
+            if path == "/api/child":
+                username = body.get("username", "")
+                fullname = body.get("fullname", username.capitalize())
+                tier = body.get("tier", AgeTier.PRE_TEEN.value)
+                pwd = body.get("password")
+                if pwd is not None and len(pwd) < MIN_PASSWORD_LENGTH:
+                    raise ValueError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters.")
+
+                child = ChildAccount.create(username, fullname, tier, pwd)
+                policy.children.append(child)
+                provisioner.apply_policy(policy, reason=f"Created child {username} via Web UI")
+                self._send_json({"status": "ok", "username": username})
+
+            elif path == "/api/child/toggle":
+                username = body.get("username")
+                enable = bool(body.get("enable", True))
+                for c in policy.children:
+                    if c.username == username:
+                        c.enabled = enable
+                provisioner.apply_policy(policy, reason=f"Toggled child {username} via Web UI")
+                self._send_json({"status": "ok"})
+
+            elif path == "/api/child/reset-usage":
+                username = body.get("username")
+                if username:
+                    tracker.reset_usage(username)
+                self._send_json({"status": "ok"})
+
+            elif path == "/api/web/block":
+                domain = body.get("domain", "")
+                for c in policy.children:
+                    if domain and domain not in c.web_filter.blocked_domains:
+                        c.web_filter.blocked_domains.append(domain)
+                provisioner.apply_policy(policy, reason=f"Blocked domain {domain} via Web UI")
+                self._send_json({"status": "ok"})
+
+            elif path == "/api/web/allow":
+                domain = body.get("domain", "")
+                for c in policy.children:
+                    if domain in c.web_filter.blocked_domains:
+                        c.web_filter.blocked_domains.remove(domain)
+                provisioner.apply_policy(policy, reason=f"Allowed domain {domain} via Web UI")
+                self._send_json({"status": "ok"})
+
+            elif path == "/api/backup":
+                backup = config_manager.create_backup("web_ui")
+                self._send_json({"status": "ok", "backup": str(backup)})
+
+            else:
+                self._send_error_json(HTTPStatus.NOT_FOUND, "Unknown action.")
+
+        def log_message(self, format: str, *args: Any) -> None:
+            # Keep request logs out of stderr; the audit log records policy changes.
+            return
+
+    return DashboardRequestHandler
 
 
-def run_server(port: int = 8443) -> None:
-    server_address = ("127.0.0.1", port)
-    httpd = HTTPServer(server_address, DashboardRequestHandler)
-    print(f"[Family Linux] Parent Dashboard server running at http://127.0.0.1:{port}")
+def run_server(port: int = DEFAULT_PORT, token: Optional[str] = None) -> None:
+    """Starts the dashboard on the loopback interface, printing the one-time access link."""
+    token = token or os.environ.get("FAMILY_LINUX_DASHBOARD_TOKEN") or secrets.token_urlsafe(32)
+    adapter = SystemAdapter()
+    config_manager = PolicyConfigManager()
+    handler = make_handler(
+        config_manager=config_manager,
+        provisioner=SystemProvisioner(adapter=adapter, config_manager=config_manager),
+        tracker=ScreenTimeTracker(),
+        audit=AuditLogger(),
+        token=token,
+        allowed_hosts={f"127.0.0.1:{port}", f"localhost:{port}"},
+    )
+    httpd = HTTPServer(("127.0.0.1", port), handler)
+    # flush=True: under systemd or a pipe, stdout is buffered and the sign-in link would not appear.
+    print(f"[Family Linux] Parent Dashboard running at http://127.0.0.1:{port}", flush=True)
+    print(f"[Family Linux] Open this one-time link to sign in: http://127.0.0.1:{port}/?token={token}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -732,7 +852,7 @@ def run_server(port: int = 8443) -> None:
 
 
 def main() -> None:
-    port = 8443
+    port = DEFAULT_PORT
     if len(sys.argv) > 1 and sys.argv[1].isdigit():
         port = int(sys.argv[1])
     run_server(port)
