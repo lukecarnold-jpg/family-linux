@@ -1,63 +1,43 @@
 # Family Linux
 
-A private, child-safe Linux distribution inspired by OpenBSD principles: secure defaults, simple administration, strong isolation, and a parent-managed workflow.
+Family Linux is a private design-stage project for a child-safe Linux experience that parents can manage simply.
 
-This repository is intentionally private while the project is in its early design and validation phase. It captures the architecture, governance model, and planned build steps for a distro designed for:
+The project direction is now fixed to:
 
-- children using a simple, safe desktop environment
-- parents managing accounts, app access, and screen time
-- admin operators maintaining a hardened, minimal OS
-- schools or homes that need predictable and secure defaults
+- **Ubuntu as the base distribution** (with an Ubuntu LTS baseline for long-term support)
+- **Ubuntu-standard security mechanisms** (users/groups, sudo for administrators, AppArmor where applicable, firewall policy, signed packages/repositories, and regular security updates)
+- **One parent account managing multiple child accounts**
+- **An interactive installer** with recommended defaults plus optional advanced adjustments
 
-## Goals
+## Project goals
 
-- Install a minimal, hardened Linux base with OpenBSD-style discipline
-- Remove unnecessary services and privilege escalations by default
-- Create a child-safe desktop with a locked-down launcher and restricted software
-- Give parents a simple dashboard to manage accounts, apps, and browsing policy
-- Keep the system predictable, readable, and easy to audit
+- Deliver a predictable, minimal child-friendly desktop workflow
+- Keep child accounts non-admin with restricted access to settings and software changes
+- Provide clear parent controls for account management, app approval, and safety policy
+- Keep defaults conservative, auditable, and maintainable
 
-## Core design principles
+## Security posture
 
-1. Secure by default
-   - no remote services enabled by default
-   - immutable or read-only critical system paths where practical
-   - least-privilege account model
-   - mandatory application allow-lists
-
-2. Simple for children
-   - single-user child experience with a large, obvious interface
-   - brightly colored, high-contrast launcher
-   - limited desktop apps and no shell access by default
-
-3. Manageable by parents
-   - separate admin and child roles
-   - time limits, app access, and network policy controls
-   - clear logs of actions and attempts
-
-4. OpenBSD-inspired discipline
-   - minimal attack surface
-   - explicit package policy and review
-   - conservative defaults and strong defaults over convenience
+Family Linux is inspired by OpenBSD discipline (minimal services, least privilege, and auditability), but it uses Ubuntu-native security and administration models rather than a custom security stack.
 
 ## Repository layout
 
-- `docs/` — architecture and policy documents
-- `config/` — default settings and policy templates
-- `scripts/` — provisioning and system bootstrap utilities
-- `src/` — future build and packaging logic
+- `/docs` - design and architecture documents
+- `/config` - policy templates and defaults
+- `/scripts` - prototype/bootstrap scripts
+- `/src` - future implementation code
 
-## Status
+## Current status
 
-This repository currently establishes the foundation for the project and documents the design direction. The next steps are to define the exact build system, package policy, and testable child-safe defaults.
+This repository documents product and technical direction. It does **not** yet provide a production installer or complete policy enforcement implementation.
 
-## Planned direction
+Key documents:
 
-- create a hardened Debian/Ubuntu or Alpine-based minimal base, with OpenBSD-inspired hardening applied
-- package a kiosk-like desktop plus parent dashboard
-- enforce strict filesystem and network policy
-- provide parent-facing controls with audit logs and recovery flows
+- `/docs/vision.md`
+- `/docs/architecture.md`
+- `/docs/installer.md`
+- `/docs/roadmap.md`
 
-## Notes
+## Privacy
 
-This repo remains private until the core design, controls, and safety model are ready for public release.
+This repository remains private until design and prototype quality are ready for a public release.
