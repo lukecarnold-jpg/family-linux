@@ -70,6 +70,9 @@ class UserManager:
                 parent.username,
             ])
 
+        # Parent's home is private: children are not in the parent's group and cannot read it.
+        self.adapter.set_permissions(Path(f"/home/{parent.username}"), mode=0o700)
+
         if parent.password:
             self.set_password(parent.username, parent.password)
 

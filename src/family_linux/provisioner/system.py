@@ -17,6 +17,7 @@ from family_linux.security.dns_filter import DNSFilterManager
 from family_linux.security.browser import BrowserPolicyManager
 from family_linux.security.apparmor import AppArmorManager
 from family_linux.security.password_policy import ParentPasswordRules
+from family_linux.security.snap_policy import SnapInstallGate
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.desktop_lockdown import DesktopLockdown
 from family_linux.security.web_gateway import WebGateway
@@ -48,6 +49,7 @@ class SystemProvisioner:
         self.browser = BrowserPolicyManager(self.adapter)
         self.apparmor = AppArmorManager(self.adapter)
         self.parent_password_rules = ParentPasswordRules(self.adapter)
+        self.snap_gate = SnapInstallGate(self.adapter)
         self.app_guard = AppGuard(self.adapter, self.audit)
         self.web_gateway = WebGateway(self.adapter)
 
@@ -103,6 +105,11 @@ class SystemProvisioner:
         for warning in self.parent_password_rules.apply([child.username for child in policy.children]):
             results["warnings"].append(warning)
         results["actions"].append(f"Parent password rules ({MIN_PARENT_PASSWORD_LENGTH}+ chars, mixed classes) enforced on password changes")
+
+        # Snap store: snapd installed; every child install, update or removal needs the parent's password
+        for warning in self.snap_gate.apply([child.username for child in policy.children]):
+            results["warnings"].append(warning)
+        results["actions"].append("Snap installs for child accounts require the parent's password on every attempt")
 
         # Provision children
         for child in policy.children:

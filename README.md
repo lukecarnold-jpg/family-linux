@@ -81,6 +81,8 @@ Policy checks run everywhere. Live checks run only on Linux and read the real sy
 - AppArmor child profile loaded in enforce mode (asked of the kernel)
 - unattended security upgrades enabled
 - parent password rules enforced by PAM on password changes
+- snap installs by a child need the parent's password on every attempt (polkit rule; snapd installed)
+- child menus follow app approval: approved apps are shown, other system-wide apps are hidden, and the parent's home is private (0700)
 
 On any other host, the live checks are reported as `[SKIP]` and the result is `[INCOMPLETE]`, never `[SUCCESS]`. A missing tool is a `[FAIL]` with the reason.
 
