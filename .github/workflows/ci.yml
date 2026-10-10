@@ -246,38 +246,34 @@ jobs:
           sudo "$(which python)" -m family_linux.cli.family_ctl web block youtube.com --child cikid
           sleep 2
           sudo install -d -o cikid -g family-children /tmp/cikid-browser
-          chrome() {
-            sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome --headless=new --no-sandbox \
-              --disable-gpu --disable-dev-shm-usage --disable-breakpad --disable-crash-reporter --no-first-run --user-data-dir=/tmp/cikid-browser/profile \
-              --dump-dom "$1" 2>/dev/null || true
-          }
-          echo "--- child resolution for example.com:"
-          sudo -u cikid getent ahosts example.com || true
-          echo "--- IPv6 routes on the VM:"
-          ip -6 route show || true
-          ip -6 addr show scope global || true
-          echo "--- parent curl over IPv6 (no gateway involved):"
-          curl -6 -sS --max-time 20 -o /dev/null -w "parent v6 http=%{http_code}\n" https://example.com || true
-          echo "--- child curl over IPv4 and IPv6:"
-          sudo -u cikid curl -4 -sS --max-time 20 -o /dev/null -w "v4 http=%{http_code}\n" https://example.com || true
-          sudo -u cikid curl -6 -sS --max-time 20 -o /dev/null -w "v6 http=%{http_code}\n" https://example.com || true
-          echo "--- chrome launch variants (exit code, first stderr line):"
-          for variant in "--headless=new" "--headless=old" "--headless=new --no-zygote --single-process" "--headless=new --disable-crash-reporter --crash-dumps-dir=/tmp/cikid-browser/crashes"; do
-            sudo -u cikid mkdir -p /tmp/cikid-browser/crashes 2>/dev/null || true
-            out=$(sudo -u cikid env HOME=/tmp/cikid-browser timeout 60 google-chrome $variant --no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --user-data-dir=/tmp/cikid-browser/profile-$RANDOM --dump-dom https://example.com 2>/tmp/chrome-err.txt)
+          COMMON="--no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --disable-breakpad --disable-crash-reporter --crash-dumps-dir=/tmp/cikid-browser/crashes"
+          # Try launch variants until one loads the allowed site. Each attempt is recorded, and
+          # failures do not stop the step.
+          chosen=""
+          n=0
+          for variant in "--headless=new" "--headless=old" "--headless=new --no-zygote --single-process" "--headless=new --no-zygote"; do
+            n=$((n + 1))
+            set +e
+            out=$(sudo -u cikid env HOME=/tmp/cikid-browser timeout 60 google-chrome $variant $COMMON --user-data-dir=/tmp/cikid-browser/try-$n --dump-dom https://example.com 2>/tmp/chrome-err-$n.txt)
             rc=$?
-            echo "variant [$variant]: rc=$rc dump_has_title=$(echo "$out" | grep -c '<title') err=$(head -1 /tmp/chrome-err.txt | cut -c1-120)"
+            set -e
+            echo "variant [$variant]: rc=$rc example_loaded=$(echo "$out" | grep -c 'Example Domain') stderr=$(head -1 /tmp/chrome-err-$n.txt | cut -c1-100)"
+            if [ "$rc" = 0 ] && echo "$out" | grep -q "Example Domain"; then
+              chosen="$variant"
+              break
+            fi
           done
-          echo "--- child chrome stderr (first lines):"
-          sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome --headless=new --no-sandbox \
-            --disable-gpu --disable-dev-shm-usage --disable-breakpad --disable-crash-reporter --no-first-run --user-data-dir=/tmp/cikid-browser/profile \
-            --dump-dom https://example.com 2>&1 >/dev/null | head -20 || true
-          example=$(chrome https://example.com)
-          if echo "$example" | grep -q "Example Domain"; then
-            echo "RESULT child loads an allowed site: yes"
-          else
-            echo "RESULT child loads an allowed site: NO"; exit 1
+          echo "chosen variant: ${chosen:-none}"
+          if [ -z "$chosen" ]; then
+            echo "RESULT browser could not load example.com as the child; measurement not taken"
+            exit 1
           fi
+          chrome() {
+            sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome $chosen $COMMON \
+              --user-data-dir=/tmp/cikid-browser/profile --dump-dom "$1" 2>/dev/null || true
+          }
+          example=$(chrome https://example.com)
+          echo "RESULT child loads an allowed site: yes"
           yt=$(chrome https://www.youtube.com)
           if echo "$yt" | grep -q "<title>YouTube"; then
             echo "RESULT child loads a blocked site (youtube.com): YES (weakness)"; exit 1
