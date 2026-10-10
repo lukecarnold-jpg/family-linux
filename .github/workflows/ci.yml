@@ -240,51 +240,47 @@ jobs:
           echo "child lookup omegle.com after approval -> ${approved:-none}"
           test -n "$approved" && test "$approved" != "0.0.0.0"
 
-      - name: Measure real browser behaviour for a child (headless Chrome as the child account)
+      - name: Measure real browser behaviour for a child (Playwright Chromium as the child account)
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright
         run: |
-          command -v google-chrome
           sudo "$(which python)" -m family_linux.cli.family_ctl web block youtube.com --child cikid
           sleep 2
+          sudo "$(which python)" -m pip install -q playwright
+          sudo -E "$(which python)" -m playwright install --with-deps chromium > /tmp/playwright-install.log 2>&1 \
+            || { tail -30 /tmp/playwright-install.log; exit 1; }
           sudo install -d -o cikid -g family-children /tmp/cikid-browser
-          COMMON="--no-sandbox --disable-gpu --disable-dev-shm-usage --no-first-run --disable-breakpad --disable-crash-reporter --crash-dumps-dir=/tmp/cikid-browser/crashes"
-          # Try launch variants until one loads the allowed site. Each attempt is recorded, and
-          # failures do not stop the step.
-          chosen=""
-          n=0
-          for variant in "--headless=new" "--headless=old" "--headless=new --no-zygote --single-process" "--headless=new --no-zygote"; do
-            n=$((n + 1))
-            set +e
-            out=$(sudo -u cikid env HOME=/tmp/cikid-browser timeout 60 google-chrome $variant $COMMON --user-data-dir=/tmp/cikid-browser/try-$n --dump-dom https://example.com 2>/tmp/chrome-err-$n.txt)
-            rc=$?
-            set -e
-            echo "variant [$variant]: rc=$rc example_loaded=$(echo "$out" | grep -c 'Example Domain') stderr=$(head -1 /tmp/chrome-err-$n.txt | cut -c1-100)"
-            if [ "$rc" = 0 ] && echo "$out" | grep -q "Example Domain"; then
-              chosen="$variant"
-              break
-            fi
-          done
-          echo "chosen variant: ${chosen:-none}"
-          if [ -z "$chosen" ]; then
-            echo "RESULT browser could not load example.com as the child; measurement not taken"
-            exit 1
-          fi
-          chrome() {
-            sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome $chosen $COMMON \
-              --user-data-dir=/tmp/cikid-browser/profile --dump-dom "$1" 2>/dev/null || true
+          cat > /tmp/browser_check.py <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          URLS = {
+              "allowed": "https://example.com",
+              "blocked": "https://www.youtube.com",
+              "ech": "https://www.cloudflare.com",
           }
-          example=$(chrome https://example.com)
-          echo "RESULT child loads an allowed site: yes"
-          yt=$(chrome https://www.youtube.com)
-          if echo "$yt" | grep -q "<title>YouTube"; then
-            echo "RESULT child loads a blocked site (youtube.com): YES (weakness)"; exit 1
-          else
-            echo "RESULT child loads a blocked site (youtube.com): no"
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+              page = browser.new_page()
+              for key, url in URLS.items():
+                  try:
+                      page.goto(url, timeout=30000)
+                      print(f"RESULT {key}: loaded title={page.title()!r}")
+                  except Exception as exc:
+                      print(f"RESULT {key}: not loaded ({type(exc).__name__})")
+              browser.close()
+          PY
+          chmod 644 /tmp/browser_check.py
+          sudo -u cikid env HOME=/tmp/cikid-browser PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+            "$(which python)" /tmp/browser_check.py | tee /tmp/browser_results.txt
+          grep -q "RESULT allowed: loaded" /tmp/browser_results.txt || { echo "FAIL: child cannot load an allowed site"; exit 1; }
+          if grep -q "RESULT blocked: loaded" /tmp/browser_results.txt; then
+            echo "FAIL: child loaded a blocked site"; exit 1
           fi
-          cf=$(chrome https://www.cloudflare.com)
-          if echo "$cf" | grep -qi "<title"; then
-            echo "RESULT child loads an ECH-capable site (cloudflare.com): yes"
+          echo "blocked site for child: not loaded (expected)"
+          if grep -q "RESULT ech: loaded" /tmp/browser_results.txt; then
+            echo "MEASURE ECH-capable site: loads for child"
           else
-            echo "RESULT child loads an ECH-capable site (cloudflare.com): no (ECH refused)"
+            echo "MEASURE ECH-capable site: does not load for child (ECH refused)"
           fi
 
       - name: Dump gateway state on failure
