@@ -237,9 +237,40 @@ Verified on the GitHub Ubuntu VM:
 Known limit, not closed:
 - **Shared addresses.** A CDN address often serves many sites. An allowed lookup therefore allows connections to any site on that address, and a child who sends a blocked site's name in TLS SNI can reach it there. Closing this needs TLS SNI inspection, which is a separate design. Until then, IP-level allowance is a strong control against casual bypass, not a complete one for CDN-hosted sites.
 
+## Session 8: server-name control for shared addresses
+
+Design: a child's HTTPS connection is checked on its server name (SNI), which is sent in plain text, so nothing is decrypted. HTTP is checked on its Host header.
+
+- **Redirect**: nftables sends a child's TCP 80 and 443 to a per-child proxy (`tls_port`, base 5401). UDP 443 (QUIC) is dropped for children, so browsers fall back to TCP where the check applies.
+- **Decision** (`security/tls_proxy.py`): a connection is relayed only if all hold:
+  - the destination address came from an allowed lookup of this child (the address store from Session 7)
+  - the name came from an allowed lookup through this child's gateway, or a parent allow rule names it
+  - the name is not blocked
+  - the ClientHello has no encrypted server name (ECH)
+- **Relay**: the original destination is read from connection tracking (`SO_ORIGINAL_DST`). Allowed connections are relayed unchanged. Refused connections are closed, and the name is recorded as a request.
+- **Parsing**: truncated names and extensions are rejected, not returned as partial names. A review test found that a cut-off hello returned `exampl` as the server name. Partial names are never returned now.
+- **Learning**: the resolver records a name when an allowed lookup returns addresses, for the clamped TTL.
+
+Verified on the GitHub Ubuntu VM:
+- The parent connects directly to `9.9.9.9:443` (control).
+- The child's TLS handshake to `9.9.9.9` with name `example.com` is refused, because no lookup returned that address.
+- The child's TLS handshake to `example.com`'s address with name `example.com` completes (TLS 1.3).
+- The child's TLS handshake to the same address with name `tiktok.com` is refused. The address is allowed, the name was never looked up.
+- The earlier checks still pass: blocked names resolve to `0.0.0.0`, DNS to `8.8.8.8` is answered by the gateway, and DNS over TLS is dropped.
+
+Decisions for you to confirm:
+- **ECH is refused for children.** Encrypted server names hide the real name, so the check cannot apply. Some sites may fail for children. The alternative is to allow ECH and decide on the public outer name, which weakens the control.
+- **QUIC is dropped for children.** Browsers fall back to TCP, which costs some speed.
+
+Known limits:
+- **Connection reuse.** The check runs when a connection opens. A browser that reuses an open HTTP/2 connection for another site on the same address (connection coalescing) is not checked again. Browsers normally look up a new name before connecting, which the lookup check catches, but this is not proven for every browser.
+- **Other ports.** Only TCP 80 and 443 are name-checked. Other ports are limited to the address allow sets.
+- **Cost.** HTTPS and HTTP for children now go through a userspace proxy. Expect extra CPU and latency on a small device.
+- **Linux only.** The proxy reads the original destination from netfilter.
+
 ## Open items, in priority order
 
-1. SNI-level control for shared CDN addresses (see Session 7, known limit).
+1. Confirm the Session 8 decisions (ECH refused, QUIC dropped) and check connection-coalescing behaviour in a real browser on the VM.
 2. Dashboard page for web requests (API exists).
 3. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
 4. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
