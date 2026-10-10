@@ -83,7 +83,9 @@ def test_browser_policy_generation():
     assert chromium["IncognitoModeAvailability"] == 1
     assert chromium["DeveloperToolsAvailability"] == 2
     assert chromium["ForceGoogleSafeSearch"] is True
-    assert "https://distracting.com" in chromium["URLBlocklist"]
+    # URL rules are per child and enforced by the DNS gateway, not machine-wide browser policy.
+    assert "URLBlocklist" not in chromium
+    assert "WebsiteFilter" not in ff["policies"]
 
 
 def test_app_guard_blocks_blacklisted_and_unapproved():
@@ -102,3 +104,104 @@ def test_app_guard_blocks_blacklisted_and_unapproved():
 
     # Should block unapproved application in allow-list mode
     assert guard.is_app_allowed(child, "steam") is False
+
+
+def test_dry_run_propagates_to_policy_and_audit_writers():
+    """A simulated provisioner must not write policy or audit files, even on a real Linux host."""
+    from family_linux.provisioner.system import SystemProvisioner
+
+    provisioner = SystemProvisioner(adapter=SystemAdapter(dry_run=True))
+    assert provisioner.config_manager.dry_run is True
+    assert provisioner.audit.dry_run is True
+    assert provisioner.app_guard.audit.dry_run is True
+
+
+def test_confined_profile_name_matches_desktop_wrapper():
+    from family_linux.security.apparmor import CHILD_SESSION_PROFILE, PROFILE_NAME
+    from family_linux.security.app_guard import AA_EXEC_PREFIX
+
+    assert f"profile {PROFILE_NAME} " in CHILD_SESSION_PROFILE
+    assert AA_EXEC_PREFIX == f"aa-exec -p {PROFILE_NAME} -- "
+
+
+def test_child_desktop_filters_hide_unapproved_and_confine_approved(tmp_path):
+    from family_linux.security.app_guard import AppGuard
+
+    system_apps = tmp_path / "usr-share-applications"
+    system_apps.mkdir()
+    (system_apps / "tuxpaint.desktop").write_text(
+        "[Desktop Entry]\nType=Application\nName=Tux Paint\nExec=tuxpaint %F\nIcon=tuxpaint\n"
+    )
+    (system_apps / "xterm.desktop").write_text("[Desktop Entry]\nType=Application\nName=XTerm\nExec=xterm\n")
+
+    child = ChildAccount.create("kid", "Kid", age_tier="young_child", password="KidPass123!")
+    adapter = SystemAdapter(dry_run=True)
+    hidden, confined = AppGuard(adapter).apply_child_desktop_filters(
+        child, confine=True, home_root=tmp_path / "home", app_dirs=[system_apps]
+    )
+
+    assert (hidden, confined) == (1, 1)
+    home_apps = tmp_path / "home" / "kid" / ".local/share/applications"
+    tux = adapter.simulated_files[str(home_apps / "tuxpaint.desktop")]
+    assert "Exec=aa-exec -p family-linux-child -- tuxpaint %F" in tux
+    assert "Name=Tux Paint" in tux
+    xterm = adapter.simulated_files[str(home_apps / "xterm.desktop")]
+    assert "NoDisplay=true" in xterm
+
+
+def test_child_desktop_filters_do_not_confine_when_apparmor_inactive(tmp_path):
+    from family_linux.security.app_guard import AppGuard
+
+    system_apps = tmp_path / "apps"
+    system_apps.mkdir()
+    (system_apps / "tuxpaint.desktop").write_text("[Desktop Entry]\nName=Tux Paint\nExec=tuxpaint\n")
+    child = ChildAccount.create("kid", "Kid", age_tier="young_child", password="KidPass123!")
+    adapter = SystemAdapter(dry_run=True)
+
+    hidden, confined = AppGuard(adapter).apply_child_desktop_filters(
+        child, confine=False, home_root=tmp_path / "home", app_dirs=[system_apps]
+    )
+    assert (hidden, confined) == (0, 0)
+    assert not adapter.simulated_files
+
+
+def test_desktop_lockdown_sets_and_locks_terminal_entry_points():
+    from family_linux.security.desktop_lockdown import (
+        LOCKS_PATH, SETTINGS_PATH, DesktopLockdown, render_locks, render_settings,
+    )
+
+    settings = render_settings()
+    assert "terminal=@as []" in settings
+    assert "disable-command-line=true" in settings
+
+    locks = render_locks()
+    assert "/org/gnome/settings-daemon/plugins/media-keys/terminal" in locks
+    assert "/org/gnome/desktop/lockdown/disable-command-line" in locks
+
+    adapter = SystemAdapter(dry_run=True)
+    warnings = DesktopLockdown(adapter).apply()
+    assert warnings == []
+    assert adapter.simulated_files[str(SETTINGS_PATH)] == settings
+    assert adapter.simulated_files[str(LOCKS_PATH)] == locks
+    assert ["dconf", "update"] in adapter.executed_commands
+
+
+def test_terminal_programs_are_blocked_for_children():
+    from family_linux.models import ALWAYS_BLOCKED_COMMANDS, DEFAULT_APPROVED_APPS
+
+    for tier_apps in DEFAULT_APPROVED_APPS.values():
+        for app in tier_apps:
+            assert app.lower() not in ALWAYS_BLOCKED_COMMANDS
+    for name in ("gnome-terminal", "org.gnome.terminal", "org.gnome.console", "xterm", "bash"):
+        assert name in ALWAYS_BLOCKED_COMMANDS
+
+
+def test_hosts_blocklist_skips_wildcards_and_reports_them(tmp_path, monkeypatch):
+    from family_linux.security.dns_filter import DNSFilterManager
+
+    adapter = SystemAdapter(dry_run=True)
+    skipped = DNSFilterManager(adapter).update_hosts_blocklist(["*.porn", "omegle.com"])
+    assert skipped == ["*.porn"]
+    hosts = adapter.simulated_files["/etc/hosts"]
+    assert "0.0.0.0 omegle.com" in hosts
+    assert "porn" not in hosts

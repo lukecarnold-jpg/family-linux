@@ -39,8 +39,11 @@ class DNSFilterManager:
         self.adapter.run_command(["systemctl", "restart", "systemd-resolved"])
         return servers
 
-    def update_hosts_blocklist(self, blocked_domains: List[str]) -> None:
-        """Appends blocked domains to /etc/hosts resolving to 0.0.0.0."""
+    def update_hosts_blocklist(self, blocked_domains: List[str]) -> List[str]:
+        """Appends blocked domains to /etc/hosts resolving to 0.0.0.0.
+
+        /etc/hosts cannot match wildcards, so "*.example" entries are skipped. Returns the skipped entries.
+        """
         # Read existing /etc/hosts
         hosts_path = Path("/etc/hosts")
         existing_lines = []
@@ -65,11 +68,17 @@ class DNSFilterManager:
 
         new_content = "\n".join(existing_lines) + "\n\n"
         new_content += f"{HOSTS_BLOCK_HEADER}\n"
+        skipped: List[str] = []
         for domain in blocked_domains:
-            clean = domain.strip().lstrip("*.")
-            if clean:
-                new_content += f"0.0.0.0 {clean}\n"
-                new_content += f"0.0.0.0 www.{clean}\n"
+            entry = domain.strip()
+            if not entry:
+                continue
+            if entry.startswith("*"):
+                skipped.append(entry)
+                continue
+            new_content += f"0.0.0.0 {entry}\n"
+            new_content += f"0.0.0.0 www.{entry}\n"
         new_content += "# --- End Family Linux Managed Blocklist ---\n"
 
         self.adapter.write_system_file(hosts_path, new_content, mode=0o644)
+        return skipped

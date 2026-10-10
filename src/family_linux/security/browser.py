@@ -29,9 +29,11 @@ class BrowserPolicyManager:
         self.adapter = adapter or SystemAdapter()
 
     def generate_firefox_policy(self, web_filter: WebFilterPolicy) -> Dict[str, Any]:
-        """Generates Firefox distribution/policies.json dictionary."""
-        blocked_urls = [f"*://{d}/*" if not d.startswith("*") else f"*://{d.lstrip('*.')}/*" for d in web_filter.blocked_domains]
+        """Generates Firefox distribution/policies.json dictionary.
 
+        URL block and allow rules are per child and enforced by the DNS gateway, because
+        managed browser policy applies to every user on the machine.
+        """
         policies: Dict[str, Any] = {
             "DisablePrivateBrowsing": web_filter.block_incognito,
             "DisableDeveloperTools": web_filter.disable_developer_tools,
@@ -47,18 +49,14 @@ class BrowserPolicyManager:
             },
         }
 
-        if blocked_urls:
-            policies["WebsiteFilter"] = {
-                "Block": blocked_urls,
-                "Exceptions": [f"*://{d}/*" for d in web_filter.allowed_domains],
-            }
-
         return {"policies": policies}
 
     def generate_chromium_policy(self, web_filter: WebFilterPolicy) -> Dict[str, Any]:
-        """Generates Chromium / Google Chrome managed JSON dictionary."""
-        blocked_urls = [f"http://{d}" for d in web_filter.blocked_domains] + [f"https://{d}" for d in web_filter.blocked_domains]
+        """Generates Chromium / Google Chrome managed JSON dictionary.
 
+        URL block and allow rules are per child and enforced by the DNS gateway, because
+        managed browser policy applies to every user on the machine.
+        """
         policy: Dict[str, Any] = {
             # 1 = Incognito disabled, 0 = enabled
             "IncognitoModeAvailability": 1 if web_filter.block_incognito else 0,
@@ -71,11 +69,6 @@ class BrowserPolicyManager:
 
         if web_filter.disable_extensions_install:
             policy["ExtensionInstallBlocklist"] = ["*"]
-
-        if blocked_urls:
-            policy["URLBlocklist"] = blocked_urls
-        if web_filter.allowed_domains:
-            policy["URLAllowlist"] = [f"http://{d}" for d in web_filter.allowed_domains] + [f"https://{d}" for d in web_filter.allowed_domains]
 
         return policy
 

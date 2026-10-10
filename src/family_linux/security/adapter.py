@@ -7,6 +7,7 @@ for dry-run mode, mock test execution, and Linux live execution.
 
 from __future__ import annotations
 
+import errno
 import os
 import platform
 import subprocess
@@ -101,10 +102,20 @@ class SystemAdapter:
             return
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_suffix(".tmp")
+        # Append ".tmp" to the full name: with_suffix() would turn "family-linux-dns.conf"
+        # and "family-linux-dns.tmp" into the same temp file.
+        tmp = target.with_name(target.name + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(content)
-        os.replace(tmp, target)
+        try:
+            os.replace(tmp, target)
+        except OSError as exc:
+            # Bind-mounted files (containers, some images) cannot be renamed over; write in place.
+            if exc.errno not in (errno.EBUSY, errno.EXDEV):
+                raise
+            tmp.unlink(missing_ok=True)
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(content)
         os.chmod(target, mode)
 
     def set_permissions(self, path: Path | str, mode: int, owner: Optional[str] = None, group: Optional[str] = None) -> None:

@@ -45,7 +45,7 @@ class SubiquityAutoinstallGenerator:
         hostname: str = "family-linux",
         locale: str = "en_US.UTF-8",
         keyboard_layout: str = "us",
-        target_disk: str = "/dev/sda",
+        target_disk: Optional[str] = None,
     ) -> str:
         """Constructs the Subiquity autoinstall user-data YAML."""
         parent = self.policy.parent
@@ -70,7 +70,6 @@ class SubiquityAutoinstallGenerator:
             "unattended-upgrades",
             "firefox",
             "tuxpaint",
-            "scratch3",
             "libreoffice",
             "vlc",
             "libnotify-bin",
@@ -85,9 +84,9 @@ class SubiquityAutoinstallGenerator:
             "curtin in-target -- groupadd -f family-children",
             f"curtin in-target -- usermod -aG family-parent {parent.username}",
             # 2. Strict sudoers
-            f'curtin in-target -- bash -c "echo \'{parent.username} ALL=(ALL:ALL) ALL\' > /etc/sudoers.d/family-linux"',
-            'curtin in-target -- bash -c "echo \'%family-children ALL=(ALL:ALL) !ALL\' >> /etc/sudoers.d/family-linux"',
-            "curtin in-target -- chmod 0440 /etc/sudoers.d/family-linux",
+            f'curtin in-target -- bash -c "echo \'{parent.username} ALL=(ALL:ALL) ALL\' > /etc/sudoers.d/family-linux-admin"',
+            'curtin in-target -- bash -c "echo \'%family-children ALL=(ALL:ALL) !ALL\' >> /etc/sudoers.d/family-linux-admin"',
+            "curtin in-target -- chmod 0440 /etc/sudoers.d/family-linux-admin",
             # 3. UFW default deny incoming
             "curtin in-target -- ufw --force default deny incoming",
             "curtin in-target -- ufw --force default allow outgoing",
@@ -99,6 +98,11 @@ class SubiquityAutoinstallGenerator:
         for child in self.policy.children:
             late_commands.append(f"curtin in-target -- usermod -g family-children -G '' {child.username}")
             late_commands.append(f"curtin in-target -- chmod 700 /home/{child.username}")
+
+        # Without an explicit target, Subiquity's "direct" layout picks the first disk.
+        layout: Dict[str, Any] = {"name": "direct"}
+        if target_disk:
+            layout["match"] = {"path": target_disk}
 
         autoinstall_data: Dict[str, Any] = {
             "autoinstall": {
@@ -122,9 +126,7 @@ class SubiquityAutoinstallGenerator:
                     "password": self._hash_password(parent.password),
                 },
                 "storage": {
-                    "layout": {
-                        "name": "direct",
-                    }
+                    "layout": layout,
                 },
                 "packages": packages,
                 "user-data": {

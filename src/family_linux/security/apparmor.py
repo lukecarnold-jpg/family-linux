@@ -11,13 +11,14 @@ from typing import Optional, List
 from family_linux.security.adapter import SystemAdapter
 
 APPARMOR_DIR = Path("/etc/apparmor.d")
+PROFILE_NAME = "family-linux-child"
 PROFILE_PATH = APPARMOR_DIR / "family-linux-child"
 
 
 CHILD_SESSION_PROFILE = """# AppArmor profile for Family Linux child session confinement
 #include <tunables/global>
 
-profile family-linux-child flags=(attach_disconnected,complain) {
+profile family-linux-child flags=(attach_disconnected) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/user-tmp>
@@ -30,12 +31,20 @@ profile family-linux-child flags=(attach_disconnected,complain) {
   /lib/** mr,
   /lib64/** mr,
 
+  # Ordinary system configuration, data, and binaries that approved apps need.
+  # The deny rules below take precedence over these allow rules.
+  /etc/** r,
+  /usr/share/** r,
+  /usr/bin/** ix,
+  /usr/libexec/** ix,
+  /bin/** ix,
+
   # Deny direct access to administrative and sensitive directories
   deny /etc/shadow* rwk,
   deny /etc/sudoers* rwk,
   deny /root/** rwk,
   deny /etc/security/** rwk,
-  deny /etc/family-linux/** w,
+  deny /etc/family-linux/** rw,
 
   # Deny execution of package managers and shell escalators
   deny /usr/bin/sudo x,
@@ -44,6 +53,14 @@ profile family-linux-child flags=(attach_disconnected,complain) {
   deny /usr/bin/apt x,
   deny /usr/bin/apt-get x,
   deny /usr/bin/dpkg x,
+
+  # Deny command lines: shells and terminal emulators. Exec is checked on every
+  # program a confined process starts, so this also stops env, python, or
+  # os.system from reaching a shell.
+  deny /{,usr/}bin/{,ba,da,z,fi}sh x,
+  deny /{,usr/}bin/{rbash,ksh,tcsh,csh} x,
+  deny /{,usr/}bin/{gnome-terminal*,xterm,uxterm,konsole,kgx,xfce4-terminal,tilix,terminator,lxterminal,mate-terminal,rxvt*,st,alacritty,kitty,foot} x,
+  deny /usr/libexec/gnome-terminal-* x,
 
   # Child home access
   owner @{HOME}/** rw,

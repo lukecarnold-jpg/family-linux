@@ -40,10 +40,12 @@ jobs:
           pytest -v --durations=10
 
       - name: Run Family Linux CLI & bootstrap smoke tests
+        env:
+          PARENT_PASS: "ci-only-Pass1"
         run: |
           chmod +x scripts/bootstrap-prototype.sh scripts/build-autoinstall-iso.sh
           ./scripts/bootstrap-prototype.sh --help
-          ./scripts/bootstrap-prototype.sh install --dry-run --non-interactive --parent-user "admin" --parent-name "Admin"
+          ./scripts/bootstrap-prototype.sh install --dry-run --non-interactive --parent-user "admin" --parent-name "Admin" --parent-pass "$PARENT_PASS"
           ./scripts/bootstrap-prototype.sh ctl status
           ./scripts/bootstrap-prototype.sh ctl user add testchild --name "Test Child" --tier young_child
           ./scripts/bootstrap-prototype.sh ctl app approve testchild tuxpaint
@@ -53,3 +55,303 @@ jobs:
           ./scripts/bootstrap-prototype.sh policyd --one-shot
           ./scripts/bootstrap-prototype.sh autoinstall ci-autoinstall.yaml
           test -f ci-autoinstall.yaml
+
+  linux-integration:
+    name: Privileged Linux integration (Python 3.12 on ubuntu-latest)
+    runs-on: ubuntu-latest
+    # Creates real accounts, rewrites /etc/sudoers.d, and enables UFW.
+    # Safe only because the runner is ephemeral.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ufw apparmor-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run integration tests as root
+        env:
+          FAMILY_LINUX_INTEGRATION: "1"
+        run: |
+          sudo -E env "PATH=$PATH" FAMILY_LINUX_INTEGRATION=1 \
+            "$(which python)" -m pytest tests/integration -v -p no:cacheprovider
+
+  live-install:
+    name: Live install and verify (Ubuntu VM with systemd and AppArmor)
+    runs-on: ubuntu-latest
+    # Applies a real policy to the ephemeral runner VM: creates accounts, enables UFW,
+    # loads the AppArmor profile, and changes DNS. Nothing after this step needs the network.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ufw apparmor-utils unattended-upgrades nftables
+
+      - name: Install Family Linux
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Apply policy as root (live, not dry-run)
+        run: |
+          sudo -E env "PATH=$PATH" "$(which python)" -m family_linux.installer.wizard \
+            --non-interactive \
+            --parent-user ciparent \
+            --parent-name "CI Parent" \
+            --parent-pass "CiParentPass1" \
+            --child "cikid:CI Kid:young_child:CiKidPass1"
+          id cikid
+          id ciparent
+
+      - name: Verify baseline on the live system
+        run: sudo "$(which python)" -m family_linux.cli.family_ctl verify
+
+      - name: Confirm the child AppArmor profile is loaded and launches a process
+        run: |
+          sudo aa-status | grep -q family-linux-child
+          sudo aa-exec -p family-linux-child -- /bin/true
+          echo "aa-exec launch under family-linux-child: ok"
+
+      - name: Confirm the child profile enforces its deny rules
+        run: |
+          # Positive control: a read the profile does not deny must still succeed.
+          sudo aa-exec -p family-linux-child -- cat /etc/hostname > /dev/null
+          echo "control read (/etc/hostname): allowed"
+          # The profile denies /etc/shadow; the read must fail while it is confined.
+          if sudo aa-exec -p family-linux-child -- cat /etc/shadow > /dev/null 2>&1; then
+            echo "FAIL: /etc/shadow readable under family-linux-child"
+            exit 1
+          fi
+          echo "/etc/shadow read: denied as expected"
+
+      - name: Confirm the child profile blocks command lines and the desktop lockdown is written
+        run: |
+          # aa-exec changes profile on exec, but the exec itself is checked against the caller
+          # (unconfined root). The check that matters is a confined process starting a shell,
+          # so run the shell through an allowed binary (env) inside the profile.
+          for shell in /bin/sh /bin/bash; do
+            if sudo aa-exec -p family-linux-child -- /usr/bin/env "$shell" -c true > /dev/null 2>&1; then
+              echo "FAIL: confined process started $shell"
+              exit 1
+            fi
+            echo "confined start of $shell: denied"
+          done
+          # Positive control for the same check: a permitted binary still runs.
+          sudo aa-exec -p family-linux-child -- /usr/bin/env true
+          test -f /etc/dconf/db/local.d/00-family-linux
+          test -f /etc/dconf/db/local.d/locks/00-family-linux
+          echo "desktop lockdown files written"
+
+      - name: Confirm the per-child DNS gateway filters each child separately
+        run: |
+          # tiktok.com is blocked for every child by default (see WebFilterPolicy).
+          systemctl is-active family-dnsd
+          sudo nft list table inet family_linux | grep -q "skuid"
+          child=$(sudo -u cikid getent ahostsv4 tiktok.com | awk 'NR==1{print $1}')
+          echo "child lookup tiktok.com -> ${child:-none}"
+          test "$child" = "0.0.0.0"
+          parent=$(sudo -u ciparent getent ahostsv4 tiktok.com | awk 'NR==1{print $1}')
+          echo "parent lookup tiktok.com -> ${parent:-none}"
+          test -n "$parent" && test "$parent" != "0.0.0.0"
+
+      - name: Confirm a child cannot use DNS outside the gateway
+        run: |
+          # Port 53 to any address is redirected to the child's gateway. A query sent to 8.8.8.8
+          # must therefore be answered by the gateway, which returns 0.0.0.0 for a blocked name.
+          sudo -u cikid python3 - <<'PY'
+          import socket, struct
+          labels = b"".join(bytes([len(p)]) + p.encode() for p in "tiktok.com".split(".")) + b"\0"
+          query = struct.pack("!HHHHHH", 0x4242, 0x0100, 1, 0, 0, 0) + labels + struct.pack("!HH", 1, 1)
+          sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          sock.settimeout(5)
+          sock.sendto(query, ("8.8.8.8", 53))
+          reply, _ = sock.recvfrom(512)
+          answer = reply[-4:]
+          print("child query to 8.8.8.8 for tiktok.com answered with:", ".".join(str(b) for b in answer))
+          assert answer == b"\0\0\0\0", "query to an outside resolver was not intercepted"
+          PY
+          # DNS over TLS is dropped for children.
+          if sudo -u cikid timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/853' 2>/dev/null; then
+            echo "FAIL: child reached DNS over TLS"; exit 1
+          fi
+          echo "DNS over TLS from child: blocked"
+
+      - name: Confirm a child can only complete TLS to addresses and names from their own lookups
+        run: |
+          uid=$(id -u cikid)
+          sudo nft list set inet family_linux allow4_$uid > /dev/null
+          cat > /tmp/tls_check.py <<'PY'
+          import socket, ssl, sys
+          ip, sni = sys.argv[1], sys.argv[2]
+          ctx = ssl.create_default_context()
+          with socket.create_connection((ip, 443), timeout=8) as raw:
+              with ctx.wrap_socket(raw, server_hostname=sni) as tls:
+                  print("TLS handshake ok:", tls.version(), "address", ip, "name", sni)
+          PY
+          chmod 644 /tmp/tls_check.py
+          # Control: the parent reaches a server directly, without the child's redirect.
+          python3 -c "import socket; socket.create_connection(('9.9.9.9', 443), timeout=10).close()"
+          echo "parent direct connect to 9.9.9.9:443: ok"
+          ip=$(sudo -u cikid getent ahostsv4 example.com | awk 'NR==1{print $1}')
+          echo "child lookup example.com -> ${ip:-none}"
+          test -n "$ip"
+          # Address no lookup returned: the child's handshake must fail.
+          if sudo -u cikid python3 /tmp/tls_check.py 9.9.9.9 example.com; then
+            echo "FAIL: child completed TLS to an address no lookup returned"; exit 1
+          fi
+          echo "child TLS to an address without a lookup: refused"
+          # Address and name both from the child's own allowed lookups: must succeed.
+          sudo -u cikid python3 /tmp/tls_check.py "$ip" example.com
+          # Learned address but a name the child never looked up (CDN shared address): refused.
+          if sudo -u cikid python3 /tmp/tls_check.py "$ip" tiktok.com; then
+            echo "FAIL: child completed TLS with a name it never looked up"; exit 1
+          fi
+          echo "child TLS to a shared address with an unlooked-up name: refused"
+
+      - name: Confirm a blocked lookup becomes a request and approval unblocks it
+        run: |
+          sudo -u cikid getent ahostsv4 omegle.com > /dev/null || true
+          # The gateway flushes requests every 30 seconds.
+          sleep 35
+          sudo "$(which python)" -m family_linux.cli.family_ctl web requests | tee /tmp/requests.txt
+          grep -q "omegle.com" /tmp/requests.txt
+          sudo "$(which python)" -m family_linux.cli.family_ctl web approve cikid omegle.com
+          sleep 2
+          approved=$(sudo -u cikid getent ahostsv4 omegle.com | awk 'NR==1{print $1}')
+          echo "child lookup omegle.com after approval -> ${approved:-none}"
+          test -n "$approved" && test "$approved" != "0.0.0.0"
+
+      - name: Measure real browser behaviour for a child (Playwright Chromium as the child account)
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /opt/ms-playwright
+        run: |
+          sudo "$(which python)" -m family_linux.cli.family_ctl web block youtube.com --child cikid
+          sleep 2
+          sudo "$(which python)" -m pip install -q playwright
+          sudo -E "$(which python)" -m playwright install --with-deps chromium > /tmp/playwright-install.log 2>&1 \
+            || { tail -30 /tmp/playwright-install.log; exit 1; }
+          sudo install -d -o cikid -g family-children /tmp/cikid-browser
+          cat > /tmp/browser_check.py <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          URLS = {
+              "allowed": "https://example.com",
+              "blocked": "https://www.youtube.com",
+              "ech": "https://www.cloudflare.com",
+          }
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+              page = browser.new_page()
+              failures = []
+              page.on("requestfailed", lambda r: failures.append(f"{r.url[:90]} {r.failure}"))
+              for key, url in URLS.items():
+                  failures.clear()
+                  try:
+                      page.goto(url, timeout=30000)
+                      print(f"RESULT {key}: loaded title={page.title()!r}")
+                  except Exception as exc:
+                      print(f"RESULT {key}: not loaded ({type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''})")
+                      try:
+                          page.wait_for_timeout(1500)
+                          import re as _re
+                          codes = sorted(set(_re.findall(r"(?:net::)?ERR_[A-Z0-9_]+", page.content())))
+                          print(f"DETAIL {key}: error page url={page.url[:80]} codes={codes[:5]}")
+                      except Exception as inner:
+                          print(f"DETAIL {key}: could not read error page ({inner})")
+                  for line in failures[:8]:
+                      print(f"DETAIL {key}: request failed {line}")
+
+              # Connection reuse: open a connection to an allowed Google front end, then try to reach
+              # blocked youtube.com (same front ends) from that page and by navigation.
+              context = browser.new_context()
+              reuse = context.new_page()
+              try:
+                  reuse.goto("https://www.google.com", timeout=30000)
+                  print(f"REUSE allowed google.com: loaded title={reuse.title()!r}")
+                  fetched = reuse.evaluate(
+                      "fetch('https://www.youtube.com/favicon.ico', {mode: 'no-cors'})"
+                      ".then(() => 'loaded', e => 'failed: ' + e)"
+                  )
+                  print(f"REUSE background request to blocked youtube.com: {fetched}")
+              except Exception as exc:
+                  print(f"REUSE allowed google.com: not loaded ({type(exc).__name__}: {str(exc).splitlines()[0][:160]})")
+              try:
+                  reuse.goto("https://www.youtube.com", timeout=30000)
+                  print(f"REUSE navigation to blocked youtube.com: loaded title={reuse.title()!r}")
+              except Exception as exc:
+                  print(f"REUSE navigation to blocked youtube.com: not loaded ({str(exc).splitlines()[0][:120]})")
+              # Repeat loads to measure an intermittent failure rate (fresh context each time).
+              for attempt in range(1, 6):
+                  ctx = browser.new_context()
+                  pg = ctx.new_page()
+                  try:
+                      pg.goto("https://www.cloudflare.com", timeout=30000)
+                      print(f"REPEAT cloudflare {attempt}: loaded")
+                  except Exception as exc:
+                      try:
+                          pg.wait_for_timeout(1000)
+                          import re as _re
+                          codes = sorted(set(_re.findall(r"ERR_[A-Z0-9_]+", pg.content())))[:3]
+                      except Exception:
+                          codes = []
+                      print(f"REPEAT cloudflare {attempt}: not loaded codes={codes} ({str(exc).splitlines()[0][:90]})")
+                  ctx.close()
+              browser.close()
+          PY
+          chmod 644 /tmp/browser_check.py
+          sudo -u cikid env HOME=/tmp/cikid-browser PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+            "$(which python)" /tmp/browser_check.py | tee /tmp/browser_results.txt
+          echo "--- gateway TLS decisions for the child during the browser run:"
+          sudo journalctl -u family-dnsd --no-pager | grep "tls cikid" | grep -i "cloudflare\|refuse\|could not\|upstream" | tail -60 || true
+          echo "--- HTTPS DNS record for example.com (does it advertise ECH?):"
+          dig +short HTTPS example.com @1.1.1.1 | head -3 | cut -c1-200 || true
+          echo "--- addresses the gateway learned for the child (IPv4 allow set):"
+          sudo nft list set inet family_linux allow4_$(id -u cikid) || true
+          echo "--- gateway request log for the child (why connections were refused):"
+          sudo "$(which python)" -m family_linux.cli.family_ctl web requests || true
+          echo "--- control: the same browser check as the parent (no gateway):"
+          sudo install -d -o ciparent /tmp/ciparent-browser
+          sudo -u ciparent env HOME=/tmp/ciparent-browser PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+            "$(which python)" /tmp/browser_check.py | sed 's/^/CONTROL parent /' || true
+          grep -q "RESULT allowed: loaded" /tmp/browser_results.txt || { echo "FAIL: child cannot load an allowed site"; exit 1; }
+          if grep -q "RESULT blocked: loaded" /tmp/browser_results.txt; then
+            echo "FAIL: child loaded a blocked site"; exit 1
+          fi
+          echo "blocked site for child: not loaded (expected)"
+          if grep -q "REUSE background request to blocked youtube.com: loaded" /tmp/browser_results.txt \
+             || grep -q "REUSE navigation to blocked youtube.com: loaded" /tmp/browser_results.txt; then
+            echo "FAIL: child reached a blocked site through connection reuse"; exit 1
+          fi
+          echo "connection reuse to a blocked site: not possible (expected)"
+          if grep -q "RESULT ech: loaded" /tmp/browser_results.txt; then
+            echo "MEASURE ECH-capable site: loads for child"
+          else
+            echo "MEASURE ECH-capable site: does not load for child (ECH refused)"
+          fi
+
+      - name: Dump gateway state on failure
+        if: failure()
+        run: |
+          sudo systemctl status family-dnsd --no-pager || true
+          sudo journalctl -u family-dnsd --no-pager | tail -80 || true
+          sudo nft list table inet family_linux | head -80 || true
+          sudo ss -ltnp | grep -E "54(01|02)|5301|5302" || true
