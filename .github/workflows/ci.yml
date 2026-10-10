@@ -272,6 +272,10 @@ jobs:
           chmod 644 /tmp/browser_check.py
           sudo -u cikid env HOME=/tmp/cikid-browser PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
             "$(which python)" /tmp/browser_check.py | tee /tmp/browser_results.txt
+          echo "--- HTTPS DNS record for example.com (does it advertise ECH?):"
+          dig +short HTTPS example.com @1.1.1.1 | head -3 | cut -c1-200 || true
+          echo "--- gateway request log for the child (why connections were refused):"
+          sudo "$(which python)" -m family_linux.cli.family_ctl web requests || true
           grep -q "RESULT allowed: loaded" /tmp/browser_results.txt || { echo "FAIL: child cannot load an allowed site"; exit 1; }
           if grep -q "RESULT blocked: loaded" /tmp/browser_results.txt; then
             echo "FAIL: child loaded a blocked site"; exit 1
