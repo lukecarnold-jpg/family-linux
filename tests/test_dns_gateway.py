@@ -307,3 +307,29 @@ def test_config_carries_uid_for_address_allow_list():
     teen = next(c for c in config["children"] if c["username"] == "teen")
     assert kid["uid"] == 1002
     assert teen["uid"] is None
+
+
+def test_without_ipv6_route_children_ipv6_is_refused_and_ipv4_dns_still_redirected():
+    rules = render_nft([(1002, 5301, 5401)], ipv6=False)
+    assert "meta skuid 1002 meta nfproto ipv6 drop" in rules
+    assert "dnat ip6" not in rules
+    assert "meta skuid 1002 meta nfproto ipv4 tcp dport { 80, 443 } redirect to :5401" in rules
+    assert "meta skuid 1002 drop" in rules
+
+
+def test_ipv6_route_detection_reads_default_route(monkeypatch):
+    from family_linux.security.web_gateway import has_ipv6_route
+
+    class Result:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout = rc, out
+
+    class FakeAdapter:
+        def __init__(self, out):
+            self.out = out
+
+        def run_command(self, cmd):
+            return Result(0, self.out)
+
+    assert has_ipv6_route(FakeAdapter("default via 2001:db8::1 dev eth0 proto ra")) is True
+    assert has_ipv6_route(FakeAdapter("")) is False

@@ -66,7 +66,7 @@ def render_config(policy: FamilyPolicy, provider: str, uids: Optional[Dict[str, 
     }
 
 
-def render_nft(child_uids: List[Tuple[int, int, int]]) -> str:
+def render_nft(child_uids: List[Tuple[int, int, int]], ipv6: bool = True) -> str:
     """Ruleset for (uid, dns_port, tls_port) triples. Re-applying it replaces the table atomically.
 
     Per child: DNS is redirected to the child's gateway port; HTTP and HTTPS are redirected to the
@@ -74,6 +74,10 @@ def render_nft(child_uids: List[Tuple[int, int, int]]) -> str:
     other outbound traffic is dropped unless it is loopback, part of an established connection,
     or to an address the gateway has just returned in a lookup (the allow sets).
     """
+    if not ipv6:
+        # Without an IPv6 route, an IPv6 connection would be accepted by the local proxy and then
+        # fail upstream, so the browser never falls back to IPv4. Refuse IPv6 at the source instead.
+        return _render_nft_ipv4_only(child_uids)
     lines = [
         f"add table inet {NFT_TABLE}",
         f"delete table inet {NFT_TABLE}",
@@ -116,6 +120,44 @@ def render_nft(child_uids: List[Tuple[int, int, int]]) -> str:
         ]
     lines += ["  }", "}", ""]
     return "\n".join(lines)
+
+
+def _render_nft_ipv4_only(child_uids: List[Tuple[int, int, int]]) -> str:
+    lines = [
+        f"add table inet {NFT_TABLE}",
+        f"delete table inet {NFT_TABLE}",
+        f"table inet {NFT_TABLE} {{",
+        "  chain output_nat {",
+        "    type nat hook output priority -100; policy accept;",
+    ]
+    for uid, port, tls_port in child_uids:
+        lines.append(f"    meta skuid {uid} meta nfproto ipv4 udp dport 53 redirect to :{port}")
+        lines.append(f"    meta skuid {uid} meta nfproto ipv4 tcp dport 53 redirect to :{port}")
+        lines.append(f"    meta skuid {uid} meta nfproto ipv4 tcp dport {{ 80, 443 }} redirect to :{tls_port}")
+    lines += [
+        "  }",
+        "  chain output_filter {",
+        "    type filter hook output priority 0; policy accept;",
+    ]
+    for uid, _, _ in child_uids:
+        lines += [
+            f"    meta skuid {uid} meta nfproto ipv6 drop",
+            f"    meta skuid {uid} tcp dport 853 drop",
+            f"    meta skuid {uid} udp dport 853 drop",
+            f"    meta skuid {uid} udp dport 443 drop",
+            f"    meta skuid {uid} ip daddr 127.0.0.0/8 accept",
+            f"    meta skuid {uid} ct state established,related accept",
+            f"    meta skuid {uid} ip daddr @allow4_{uid} accept",
+            f"    meta skuid {uid} drop",
+        ]
+    lines += ["  }", "}", ""]
+    return "\n".join(lines)
+
+
+def has_ipv6_route(adapter: SystemAdapter) -> bool:
+    """True when the host has an IPv6 default route (checked read-only)."""
+    result = adapter.run_command(["ip", "-6", "route", "show", "default"])
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def render_service(python: str = sys.executable) -> str:
@@ -174,7 +216,10 @@ class WebGateway:
                 continue
             uid_pairs.append((uid, ports[child.username], proxy_ports[child.username]))
 
-        self.adapter.write_system_file(NFT_RULES_PATH, render_nft(uid_pairs), mode=0o644)
+        ipv6 = has_ipv6_route(self.adapter)
+        if not ipv6:
+            warnings.append("No IPv6 route on this host; children's IPv6 traffic is refused so browsers use IPv4")
+        self.adapter.write_system_file(NFT_RULES_PATH, render_nft(uid_pairs, ipv6=ipv6), mode=0o644)
         if uid_pairs:
             nft = self.adapter.run_command(["nft", "-f", str(NFT_RULES_PATH)])
             if nft.returncode != 0:
