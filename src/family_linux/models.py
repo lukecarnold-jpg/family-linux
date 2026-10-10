@@ -12,8 +12,32 @@ from dataclasses import dataclass, field, asdict
 from enum import Enum
 from typing import Any, Dict, List, Optional
 import re
+import string
 
-MIN_PASSWORD_LENGTH = 8
+MIN_PASSWORD_LENGTH = 8  # child accounts
+MIN_PARENT_PASSWORD_LENGTH = 14
+
+
+def parent_password_problems(password: Optional[str]) -> List[str]:
+    """Lists the parent password rules that are not met; an empty list means the password is acceptable.
+
+    Character classes are ASCII only: upper case A-Z, lower case a-z, digits 0-9, and any of
+    the ASCII punctuation characters as the special character.
+    """
+    if not password:
+        return ["a password is required"]
+    problems = []
+    if len(password) < MIN_PARENT_PASSWORD_LENGTH:
+        problems.append(f"at least {MIN_PARENT_PASSWORD_LENGTH} characters")
+    if not re.search(r"[A-Z]", password):
+        problems.append("an upper-case letter")
+    if not re.search(r"[a-z]", password):
+        problems.append("a lower-case letter")
+    if not re.search(r"[0-9]", password):
+        problems.append("a number")
+    if not any(char in string.punctuation for char in password):
+        problems.append("a special character (for example ! @ # $ %)")
+    return problems
 
 
 class AgeTier(str, Enum):

@@ -9,13 +9,14 @@ from __future__ import annotations
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from family_linux.models import FamilyPolicy
+from family_linux.models import FamilyPolicy, MIN_PARENT_PASSWORD_LENGTH
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security.users import UserManager
 from family_linux.security.firewall import FirewallManager
 from family_linux.security.dns_filter import DNSFilterManager
 from family_linux.security.browser import BrowserPolicyManager
 from family_linux.security.apparmor import AppArmorManager
+from family_linux.security.password_policy import ParentPasswordRules
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.desktop_lockdown import DesktopLockdown
 from family_linux.security.web_gateway import WebGateway
@@ -46,6 +47,7 @@ class SystemProvisioner:
         self.dns_filter = DNSFilterManager(self.adapter)
         self.browser = BrowserPolicyManager(self.adapter)
         self.apparmor = AppArmorManager(self.adapter)
+        self.parent_password_rules = ParentPasswordRules(self.adapter)
         self.app_guard = AppGuard(self.adapter, self.audit)
         self.web_gateway = WebGateway(self.adapter)
 
@@ -96,6 +98,11 @@ class SystemProvisioner:
         # Provision parent
         self.users.provision_parent(policy.parent)
         results["actions"].append(f"Parent account '{policy.parent.username}' provisioned with sudo")
+
+        # Parent password rules apply to every later password change (passwd, sudo passwd, desktop dialogs)
+        for warning in self.parent_password_rules.apply([child.username for child in policy.children]):
+            results["warnings"].append(warning)
+        results["actions"].append(f"Parent password rules ({MIN_PARENT_PASSWORD_LENGTH}+ chars, mixed classes) enforced on password changes")
 
         # Provision children
         for child in policy.children:

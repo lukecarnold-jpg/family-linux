@@ -12,6 +12,7 @@ them only on a disposable VM or CI runner, never on a workstation.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -115,3 +116,37 @@ def test_firewall_baseline_is_active():
     status = _run("ufw", "status", "verbose").stdout
     assert "Status: active" in status
     assert "deny (incoming)" in status
+
+
+@pytest.fixture
+def pam_passwd_restored():
+    """Restores /etc/pam.d/passwd after a test that installs the parent password rules."""
+    original = Path("/etc/pam.d/passwd").read_text()
+    yield
+    Path("/etc/pam.d/passwd").write_text(original)
+
+
+def test_parent_password_rules_refuse_a_weak_change(parent_name, child_name, pam_passwd_restored):
+    if not shutil.which("pamtester"):
+        pytest.skip("pamtester is not installed on this host")
+    from family_linux.security.password_policy import ParentPasswordRules, block_in_place
+
+    _run("useradd", "-m", parent_name)
+    _run("useradd", "-m", child_name)
+    subprocess.run(["chpasswd"], input=f"{parent_name}:Initial-Passphrase-99\n", text=True, check=True)
+
+    warnings = ParentPasswordRules(SystemAdapter()).apply([child_name])
+    assert warnings == []
+    assert block_in_place(Path("/etc/pam.d/passwd").read_text())
+
+    weak = subprocess.run(
+        ["pamtester", "passwd", parent_name, "chauthtok"],
+        input="Weak1!\nWeak1!\n", capture_output=True, text=True,
+    )
+    assert weak.returncode != 0, weak.stdout + weak.stderr
+
+    strong = subprocess.run(
+        ["pamtester", "passwd", parent_name, "chauthtok"],
+        input="Correct-Horse-42-Battery\nCorrect-Horse-42-Battery\n", capture_output=True, text=True,
+    )
+    assert strong.returncode == 0, strong.stdout + strong.stderr

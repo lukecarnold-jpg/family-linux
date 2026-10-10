@@ -16,6 +16,7 @@ from typing import List, Optional, Tuple
 from family_linux.config import PolicyConfigManager
 from family_linux.models import (
     MIN_PASSWORD_LENGTH,
+    MIN_PARENT_PASSWORD_LENGTH,
     FamilyPolicy,
     ChildAccount,
     AgeTier,
@@ -28,6 +29,7 @@ from family_linux.audit.logger import AuditLogger
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security.apparmor import PROFILE_PATH
 from family_linux.security.browser import CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
+from family_linux.security.password_policy import PAM_PASSWD_PATH, block_in_place
 from family_linux.security.users import SUDOERS_FILE
 from family_linux.security.dns_gateway import clear_request, load_requests
 from family_linux.security.web_gateway import REQUESTS_PATH
@@ -410,6 +412,7 @@ class FamilyCtl:
                 "Chromium managed policy installed",
                 "AppArmor child profile loaded in enforce mode",
                 "Unattended security updates enabled",
+                "Parent password rules enforced by PAM",
             ):
                 skip(name, "live check runs only on Linux")
         else:
@@ -446,6 +449,13 @@ class FamilyCtl:
                     loaded,
                     "active in enforce mode" if loaded else "not loaded in enforce mode",
                 )
+
+            pam_text = PAM_PASSWD_PATH.read_text(encoding="utf-8") if PAM_PASSWD_PATH.exists() else ""
+            record(
+                "Parent password rules enforced by PAM",
+                block_in_place(pam_text),
+                f"{PAM_PASSWD_PATH}: pam_pwquality minlen={MIN_PARENT_PASSWORD_LENGTH} for parent accounts",
+            )
 
             updates = _probe(["systemctl", "is-enabled", "unattended-upgrades"])
             if updates is None:

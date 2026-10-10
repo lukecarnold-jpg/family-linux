@@ -29,6 +29,7 @@ Current protections in the prototype:
 
 - The parent dashboard listens on `127.0.0.1` only, requires an access token, and rejects cross-origin and non-JSON requests.
 - Passwords are never written to the policy file or the API. They are used once to set the account password.
+- The parent password must be at least 14 characters with upper-case, lower-case, a number and a special character. This applies at install time and on every later change or reset through `passwd` (PAM `pam_pwquality`). Child passwords are not affected.
 - Saving the policy happens before system changes, so a failed apply can be re-run to finish.
 - `family-ctl verify` reports real system state on Linux and says so when a check cannot run.
 
@@ -62,7 +63,7 @@ Open it in a browser on the same machine. It sets a session cookie and redirects
 |---------|--------------|
 | `help` (default) | Shows usage |
 | `install [--dry-run]` | Runs the 12-step interactive installer |
-| `install --dry-run --non-interactive --parent-pass PASS [--child user:Name:tier:PASS]…` | Unattended run; `--parent-pass` is required (min 8 characters) |
+| `install --dry-run --non-interactive --parent-pass PASS [--child user:Name:tier:PASS]…` | Unattended run; `--parent-pass` is required (min 14 characters, with upper-case, lower-case, a number and a special character) |
 | `dashboard [port]` | Starts the parent web dashboard on `127.0.0.1` (default port 8443) |
 | `ctl <args>` | Runs the `family-ctl` parent CLI (`status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify`) |
 | `policyd [--one-shot]` | Runs the screen-time and curfew enforcement daemon |
@@ -79,6 +80,7 @@ Policy checks run everywhere. Live checks run only on Linux and read the real sy
 - Firefox and Chromium managed policy files present
 - AppArmor child profile loaded in enforce mode (asked of the kernel)
 - unattended security upgrades enabled
+- parent password rules enforced by PAM on password changes
 
 On any other host, the live checks are reported as `[SKIP]` and the result is `[INCOMPLETE]`, never `[SUCCESS]`. A missing tool is a `[FAIL]` with the reason.
 

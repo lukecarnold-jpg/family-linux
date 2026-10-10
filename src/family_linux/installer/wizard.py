@@ -31,6 +31,8 @@ from family_linux.models import (
     AgeTier,
     DNSProvider,
     MIN_PASSWORD_LENGTH,
+    MIN_PARENT_PASSWORD_LENGTH,
+    parent_password_problems,
 )
 from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
 from family_linux.provisioner.autoinstall import SubiquityAutoinstallGenerator
@@ -140,7 +142,13 @@ class InstallerWizard:
         while True:
             username = self.prompt("Parent username", "parent")
             full_name = self.prompt("Parent full name", "Family Administrator")
-            password = self.secret_prompt(f"Parent password (min {MIN_PASSWORD_LENGTH} characters)")
+            password = self.secret_prompt(
+                f"Parent password (at least {MIN_PARENT_PASSWORD_LENGTH} characters, with upper-case, lower-case, a number and a special character)"
+            )
+            problems = parent_password_problems(password)
+            if problems:
+                print(f"Password must include: {', '.join(problems)}.")
+                continue
 
             parent = ParentAccount(
                 username=username,
@@ -152,9 +160,6 @@ class InstallerWizard:
             errors = parent.validate()
             if errors:
                 print(f"Validation error: {'; '.join(errors)}")
-                continue
-            if len(password) < MIN_PASSWORD_LENGTH:
-                print(f"Password too short: please enter at least {MIN_PASSWORD_LENGTH} characters.")
                 continue
 
             self.parent = parent
@@ -328,7 +333,7 @@ def main() -> None:
     parser.add_argument("--target-disk", type=str, default=None, help="Target disk path, e.g. /dev/nvme0n1 (default: first disk the installer finds)")
     parser.add_argument("--parent-user", type=str, default="parent", help="Parent username")
     parser.add_argument("--parent-name", type=str, default="Family Administrator", help="Parent full name")
-    parser.add_argument("--parent-pass", type=str, default=None, help=f"Parent password (required with --non-interactive, min {MIN_PASSWORD_LENGTH} characters)")
+    parser.add_argument("--parent-pass", type=str, default=None, help=f"Parent password (required with --non-interactive; at least {MIN_PARENT_PASSWORD_LENGTH} characters with upper-case, lower-case, a number and a special character)")
     parser.add_argument("--child", action="append", help="Child account specification (format: username:fullname:tier:password, password required)")
     parser.add_argument("--export-autoinstall", type=str, help="Export Ubuntu Subiquity autoinstall user-data YAML to file and exit")
     args = parser.parse_args()
@@ -340,8 +345,9 @@ def main() -> None:
         wizard.target_disk = args.target_disk
 
     if args.non_interactive or args.export_autoinstall:
-        if not args.parent_pass or len(args.parent_pass) < MIN_PASSWORD_LENGTH:
-            sys.exit(f"Error: --parent-pass is required with --non-interactive and must be at least {MIN_PASSWORD_LENGTH} characters.")
+        problems = parent_password_problems(args.parent_pass)
+        if problems:
+            sys.exit(f"Error: --parent-pass is required with --non-interactive and must include {', '.join(problems)}.")
         wizard.parent = ParentAccount(
             username=args.parent_user,
             full_name=args.parent_name,
