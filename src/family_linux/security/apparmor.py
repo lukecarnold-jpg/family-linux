@@ -31,12 +31,20 @@ profile family-linux-child flags=(attach_disconnected) {
   /lib/** mr,
   /lib64/** mr,
 
+  # Ordinary system configuration, data, and binaries that approved apps need.
+  # The deny rules below take precedence over these allow rules.
+  /etc/** r,
+  /usr/share/** r,
+  /usr/bin/** ix,
+  /usr/libexec/** ix,
+  /bin/** ix,
+
   # Deny direct access to administrative and sensitive directories
   deny /etc/shadow* rwk,
   deny /etc/sudoers* rwk,
   deny /root/** rwk,
   deny /etc/security/** rwk,
-  deny /etc/family-linux/** w,
+  deny /etc/family-linux/** rw,
 
   # Deny execution of package managers and shell escalators
   deny /usr/bin/sudo x,
