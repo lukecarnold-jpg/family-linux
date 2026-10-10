@@ -379,7 +379,7 @@ Evidence (Ubuntu 24.04 container, real `passwd` in a pty, scripts kept in the sc
 - Root runs `passwd parent` with a weak password: refused.
 - Root runs `passwd kid` with `abc`: accepted (child exempt). Child changes own password: accepted.
 - A child still gets Ubuntu's default 8-character check (from `common-password`). That is unchanged by this session, and a 1-character child password is still refused.
-- `tests/integration/test_linux_provisioning.py::test_parent_password_rules_refuse_a_weak_change` passes as root in the same container (`FAMILY_LINUX_INTEGRATION=1`, `pamtester`). It runs in the `linux-integration` CI job only when that job has `pamtester`; the job does not install it yet, so the test skips there.
+- `tests/integration/test_linux_provisioning.py::test_parent_password_rules_refuse_a_weak_change` passes as root in the same container (`FAMILY_LINUX_INTEGRATION=1`, `pamtester`). The `linux-integration` CI job installs `pamtester` and `libpam-pwquality`, so the test runs there instead of skipping.
 
 Limits:
 - `ocredit` counts any non-alphanumeric character, including a space. The installer's check (ASCII punctuation only) is stricter, so the two differ only for a space as the special character.
