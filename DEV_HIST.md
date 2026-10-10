@@ -160,13 +160,21 @@ The profile was named but never attached, so it could not confine any process (o
 - `apply_child_desktop_filters` now takes `confine`, `home_root`, and `app_dirs`, and returns `(hidden, confined)`. The injected paths let tests run without touching `/home`.
 - Verified in the Ubuntu container: the profile parses with `apparmor_parser -Q`, and a live install with AppArmor inactive wraps nothing. The attachment itself has not been exercised at runtime, because the container has no AppArmor kernel and no desktop. Next step is a VM run and a check that `aa-exec` launches each approved app under the profile.
 
+## Session 4: PR and VM validation
+
+- Opened PR #2 (`harden-prototype` into `main`). CI is green across Python 3.9–3.13 on Ubuntu and macOS.
+- The privileged `linux-integration` job ran on GitHub: 4 tests passed on a real Ubuntu runner.
+- Added a `live-install` job that applies a real non-dry-run policy on the GitHub Ubuntu VM (systemd and AppArmor running), runs `family-ctl verify`, and checks the AppArmor profile. All 9 live checks pass on the VM.
+- The VM job found a real problem. The child profile denied a plain read of `/etc/hostname`, which would stop approved apps from running under it. Caught by a positive control: an unrestricted-read check would have passed the negative check while breaking normal use.
+- Fixed the profile: allows `/etc`, `/usr/share`, and standard binary paths. The explicit denies (shadow, sudoers, root, package managers, family policy) still apply. The VM job then passed both controls: `/etc/hostname` readable, `/etc/shadow` denied under `family-linux-child`.
+- Known trade-off: confined processes can still execute other binaries, including shells. A launched app that spawns a shell escapes the file restrictions. Closing this needs the child session work below.
+
 ## Open items, in priority order
 
-1. Run the live install and `verify` on a real Ubuntu VM (with AppArmor and systemd running). The container cannot pass the AppArmor check or show a running service.
-2. Exercise the AppArmor attachment on a VM: confirm `aa-exec` launches each approved app under `family-linux-child` and that the profile's deny rules do not break normal app use. The attachment is now wired (Session 3), but runtime behaviour is unverified.
-3. Child session lockdown (see Not done).
-4. Test the child login path with a real GNOME or Ubuntu session (finding 7).
-5. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
-6. Add a pre-apply plan (dry-run diff) and consider rollback.
-7. Packaging: install the console scripts and systemd units.
-8. Scrub or recreate backups that hold old plaintext passwords.
+1. Child session lockdown: stop confined apps from reaching a shell (see Session 4 trade-off), and hide terminal access at the desktop level.
+2. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
+3. Extend the VM job to launch each approved app under the profile (only `/bin/true` and `cat` have been exercised).
+4. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
+5. Add a pre-apply plan (dry-run diff) and consider rollback.
+6. Packaging: install the console scripts and systemd units.
+7. Scrub or recreate backups that hold old plaintext passwords.
