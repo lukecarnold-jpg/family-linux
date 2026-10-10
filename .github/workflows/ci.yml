@@ -86,3 +86,47 @@ jobs:
         run: |
           sudo -E env "PATH=$PATH" FAMILY_LINUX_INTEGRATION=1 \
             "$(which python)" -m pytest tests/integration -v -p no:cacheprovider
+
+  live-install:
+    name: Live install and verify (Ubuntu VM with systemd and AppArmor)
+    runs-on: ubuntu-latest
+    # Applies a real policy to the ephemeral runner VM: creates accounts, enables UFW,
+    # loads the AppArmor profile, and changes DNS. Nothing after this step needs the network.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ufw apparmor-utils unattended-upgrades
+
+      - name: Install Family Linux
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Apply policy as root (live, not dry-run)
+        run: |
+          sudo -E env "PATH=$PATH" "$(which python)" -m family_linux.installer.wizard \
+            --non-interactive \
+            --parent-user ciparent \
+            --parent-name "CI Parent" \
+            --parent-pass "CiParentPass1" \
+            --child "cikid:CI Kid:young_child:CiKidPass1"
+          id cikid
+          id ciparent
+
+      - name: Verify baseline on the live system
+        run: sudo "$(which python)" -m family_linux.cli.family_ctl verify
+
+      - name: Confirm the child AppArmor profile is loaded and launches a process
+        run: |
+          sudo aa-status | grep -q family-linux-child
+          sudo aa-exec -p family-linux-child -- /bin/true
+          echo "aa-exec launch under family-linux-child: ok"
