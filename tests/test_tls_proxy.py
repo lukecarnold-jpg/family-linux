@@ -116,7 +116,7 @@ def test_parent_allow_rule_names_are_allowed_on_a_learned_address():
 def test_unlearned_address_is_refused():
     addr, nm = stores([], ["example.com"])
     allowed, reason = tp.decide(DomainRules([], []), addr, nm, "9.9.9.9", "example.com", False)
-    assert not allowed and "address" in reason
+    assert not allowed and "address 9.9.9.9 not returned" in reason
 
 
 def test_encrypted_server_name_is_refused():

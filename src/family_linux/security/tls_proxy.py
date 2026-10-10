@@ -195,7 +195,7 @@ def decide(
 ) -> Tuple[bool, str]:
     """Returns (allowed, reason) for one connection."""
     if not learned_addresses.allowed(address):
-        return False, "address not returned by an allowed lookup"
+        return False, f"address {address} not returned by an allowed lookup"
     if ech:
         return False, "encrypted server name not permitted"
     if not name:

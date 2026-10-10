@@ -274,6 +274,8 @@ jobs:
             "$(which python)" /tmp/browser_check.py | tee /tmp/browser_results.txt
           echo "--- HTTPS DNS record for example.com (does it advertise ECH?):"
           dig +short HTTPS example.com @1.1.1.1 | head -3 | cut -c1-200 || true
+          echo "--- addresses the gateway learned for the child (IPv4 allow set):"
+          sudo nft list set inet family_linux allow4_$(id -u cikid) || true
           echo "--- gateway request log for the child (why connections were refused):"
           sudo "$(which python)" -m family_linux.cli.family_ctl web requests || true
           grep -q "RESULT allowed: loaded" /tmp/browser_results.txt || { echo "FAIL: child cannot load an allowed site"; exit 1; }
