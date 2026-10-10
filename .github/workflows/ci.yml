@@ -278,3 +278,11 @@ jobs:
           else
             echo "RESULT child loads an ECH-capable site (cloudflare.com): no (ECH refused)"
           fi
+
+      - name: Dump gateway state on failure
+        if: failure()
+        run: |
+          sudo systemctl status family-dnsd --no-pager || true
+          sudo journalctl -u family-dnsd --no-pager | tail -80 || true
+          sudo nft list table inet family_linux | head -80 || true
+          sudo ss -ltnp | grep -E "54(01|02)|5301|5302" || true
