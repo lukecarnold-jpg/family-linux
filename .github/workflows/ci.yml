@@ -272,6 +272,8 @@ jobs:
           chmod 644 /tmp/browser_check.py
           sudo -u cikid env HOME=/tmp/cikid-browser PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
             "$(which python)" /tmp/browser_check.py | tee /tmp/browser_results.txt
+          echo "--- gateway TLS decisions for the child during the browser run:"
+          sudo journalctl -u family-dnsd --no-pager | grep "tls cikid" | tail -60 || true
           echo "--- HTTPS DNS record for example.com (does it advertise ECH?):"
           dig +short HTTPS example.com @1.1.1.1 | head -3 | cut -c1-200 || true
           echo "--- addresses the gateway learned for the child (IPv4 allow set):"
