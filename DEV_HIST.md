@@ -301,10 +301,37 @@ Results:
 
 Not covered locally: the systemd unit, the AppArmor and gateway interaction (covered by the earlier VM job), headless Chrome, IPv6, and connection reuse. The Chrome measurement and the Session 8 decisions still wait on CI.
 
+## Session 11: browser measurement with CI re-enabled
+
+CI was re-enabled after billing was restored. The live job now runs Playwright Chromium as the child account against the gateway, and the whole run is green.
+
+Measured in a real browser (Chromium 1xx, child account, gateway with the Session 8 controls):
+- **Allowed site (`example.com`):** loads, title "Example Domain".
+- **Blocked site (`youtube.com`):** refused. DNS returns `0.0.0.0`, and the proxy refuses any connection that reaches it.
+- **`cloudflare.com`:** the page did not load. Every connection to it was allowed by the gateway, so the cause is not known yet. This is not the ECH refusal, because no real ECH connection was seen.
+- **Connection reuse:** not measured.
+- **Real ECH refusal:** not measured. The advertised-config refusal is in place, but no real ECH connection occurred in the run.
+
+Bugs the browser run exposed (all fixed, all covered by tests):
+- **HTTPS record address hints.** Chrome connected to `ipv4hint` and `ipv6hint` addresses without an A lookup, and those addresses were never learned. The gateway now reads hints from HTTPS and SVCB records (RFC 9460).
+- **GREASE ECH.** Chrome sends a random ECH extension on every connection. Treating any ECH hello as a refusal refused nearly all browser traffic. Only ECH that uses a config advertised in an allowed HTTPS record is refused now. Other ECH hellos are judged by their outer name.
+- **IPv6 without a route.** With no IPv6 route on the host, the local proxy accepted a child's IPv6 connection and then failed upstream. Browsers saw a closed connection instead of a connect failure and did not fall back to IPv4. When the host has no IPv6 default route, children's IPv6 is now refused at the source.
+- **IPv4-only ruleset.** It referenced allow sets it did not declare, so `nft` rejected the whole table. Now declared, and `nft -c` passes.
+- **Chrome launch.** Google Chrome crashed in every launch variant on the runner before loading a page. Playwright's Chromium launches and is used instead.
+
+Corrections:
+- The Session 9 note that IPv6 was broken for children was wrong: the VM has no IPv6 route, and the parent's own `curl -6` fails too.
+- The Session 8 note that refusing ECH was an acceptable cost was wrong as written: it refused all Chrome traffic (GREASE). The corrected rule refuses only real ECH.
+
+Known limits:
+- **ECH config ID collisions.** Config IDs are one byte, so a GREASE hello can collide with a learned ID and be refused (about 1 in 256 per learned config).
+- **Real ECH is refused only when its config was learned through the gateway.** A config obtained another way is judged by its outer name, which is the public name, not the real one.
+
 ## Open items, in priority order
 
-1. Restore CI (billing), then run the Chrome launch matrix and the browser measurement (Session 9).
-2. Confirm the Session 8 decisions (ECH refused, QUIC dropped) with the measurement results.
+1. Explain why `cloudflare.com` does not load for the child, although its connections are allowed (Session 11).
+2. Measure connection reuse in the browser: two hosts on one address, the blocked one loaded after the allowed one.
+3. Measure a real ECH site once one is found, to see what the real-ECH refusal costs.
 3. Dashboard page for web requests (API exists).
 4. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
 5. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
