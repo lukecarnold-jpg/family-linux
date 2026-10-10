@@ -161,3 +161,34 @@ def test_child_desktop_filters_do_not_confine_when_apparmor_inactive(tmp_path):
     )
     assert (hidden, confined) == (0, 0)
     assert not adapter.simulated_files
+
+
+def test_desktop_lockdown_sets_and_locks_terminal_entry_points():
+    from family_linux.security.desktop_lockdown import (
+        LOCKS_PATH, SETTINGS_PATH, DesktopLockdown, render_locks, render_settings,
+    )
+
+    settings = render_settings()
+    assert "terminal=@as []" in settings
+    assert "disable-command-line=true" in settings
+
+    locks = render_locks()
+    assert "/org/gnome/settings-daemon/plugins/media-keys/terminal" in locks
+    assert "/org/gnome/desktop/lockdown/disable-command-line" in locks
+
+    adapter = SystemAdapter(dry_run=True)
+    warnings = DesktopLockdown(adapter).apply()
+    assert warnings == []
+    assert adapter.simulated_files[str(SETTINGS_PATH)] == settings
+    assert adapter.simulated_files[str(LOCKS_PATH)] == locks
+    assert ["dconf", "update"] in adapter.executed_commands
+
+
+def test_terminal_programs_are_blocked_for_children():
+    from family_linux.models import ALWAYS_BLOCKED_COMMANDS, DEFAULT_APPROVED_APPS
+
+    for tier_apps in DEFAULT_APPROVED_APPS.values():
+        for app in tier_apps:
+            assert app.lower() not in ALWAYS_BLOCKED_COMMANDS
+    for name in ("gnome-terminal", "org.gnome.terminal", "org.gnome.console", "xterm", "bash"):
+        assert name in ALWAYS_BLOCKED_COMMANDS

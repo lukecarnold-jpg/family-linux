@@ -17,6 +17,7 @@ from family_linux.security.dns_filter import DNSFilterManager
 from family_linux.security.browser import BrowserPolicyManager
 from family_linux.security.apparmor import AppArmorManager
 from family_linux.security.app_guard import AppGuard
+from family_linux.security.desktop_lockdown import DesktopLockdown
 from family_linux.config import PolicyConfigManager
 from family_linux.audit.logger import AuditLogger
 
@@ -139,6 +140,12 @@ class SystemProvisioner:
                 results["warnings"].append(
                     "Could not enable unattended-upgrades (is the package installed?); security updates may not run"
                 )
+
+        # 6c. Lock the desktop entry points that AppArmor cannot confine (terminal shortcut, Alt+F2)
+        if policy.children:
+            for warning in DesktopLockdown(self.adapter).apply():
+                results["warnings"].append(warning)
+            results["actions"].append("Desktop lockdown applied (terminal shortcut and Alt+F2 command line locked)")
 
         # 7. Apply desktop launcher restrictions
         # Approved apps are launched through the confinement profile only when AppArmor is active;

@@ -54,6 +54,14 @@ profile family-linux-child flags=(attach_disconnected) {
   deny /usr/bin/apt-get x,
   deny /usr/bin/dpkg x,
 
+  # Deny command lines: shells and terminal emulators. Exec is checked on every
+  # program a confined process starts, so this also stops env, python, or
+  # os.system from reaching a shell.
+  deny /{,usr/}bin/{,ba,da,z,fi}sh x,
+  deny /{,usr/}bin/{rbash,ksh,tcsh,csh} x,
+  deny /{,usr/}bin/{gnome-terminal*,xterm,uxterm,konsole,kgx,xfce4-terminal,tilix,terminator,lxterminal,mate-terminal,rxvt*,st,alacritty,kitty,foot} x,
+  deny /usr/libexec/gnome-terminal-* x,
+
   # Child home access
   owner @{HOME}/** rw,
   owner @{HOME}/** mr,

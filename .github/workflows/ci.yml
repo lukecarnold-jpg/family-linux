@@ -142,3 +142,18 @@ jobs:
             exit 1
           fi
           echo "/etc/shadow read: denied as expected"
+
+      - name: Confirm the child profile blocks command lines and the desktop lockdown is written
+        run: |
+          for shell in /bin/sh /bin/bash /usr/bin/bash; do
+            if sudo aa-exec -p family-linux-child -- "$shell" -c true > /dev/null 2>&1; then
+              echo "FAIL: $shell can be started under family-linux-child"
+              exit 1
+            fi
+            echo "exec of $shell under family-linux-child: denied"
+          done
+          # Positive control for the same check: a permitted binary still runs.
+          sudo aa-exec -p family-linux-child -- /usr/bin/env true
+          test -f /etc/dconf/db/local.d/00-family-linux
+          test -f /etc/dconf/db/local.d/locks/00-family-linux
+          echo "desktop lockdown files written"
