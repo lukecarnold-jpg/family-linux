@@ -1,0 +1,34 @@
+{
+  "policies": {
+    "DisablePrivateBrowsing": true,
+    "DisableDeveloperTools": true,
+    "DisableSafeMode": true,
+    "InstallAddonsPermission": {
+      "Default": false
+    },
+    "SearchSuggestEnabled": true,
+    "Preferences": {
+      "browser.safesearch.enabled": true,
+      "browser.urlbar.suggest.searches": true,
+      "network.trr.mode": 5
+    },
+    "WebsiteFilter": {
+      "Block": [
+        "*://*.adult/*",
+        "*://*.xxx/*",
+        "*://*.porn/*",
+        "*://*.gambling/*",
+        "*://omegle.com/*",
+        "*://chatroulette.com/*",
+        "*://tiktok.com/*"
+      ],
+      "Exceptions": [
+        "*://*.wikipedia.org/*",
+        "*://*.khanacademy.org/*",
+        "*://*.scratch.mit.edu/*",
+        "*://*.nasa.gov/*",
+        "*://*.pbskids.org/*"
+      ]
+    }
+  }
+}

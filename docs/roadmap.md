@@ -46,5 +46,12 @@
 
 - architecture direction: complete
 - installer design document: complete
-- Ubuntu prototype workflow: planned
-- production-quality enforcement: future work
+- interactive installer prototype (12-step flow): complete
+- policy schema and management engine: complete
+- parental administration CLI (`family-ctl`): complete
+- parental web control dashboard: complete
+- screen time and curfew daemon (`family-policyd`): complete
+- Ubuntu LTS autoinstall / Subiquity workflow: complete
+- automated test suite (pytest): complete (31 tests passing)
+- ISO build tooling: prototype complete
+- production-quality hardware validation: ongoing

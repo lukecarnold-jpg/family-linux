@@ -1,0 +1,14 @@
+[Unit]
+Description=Family Linux Parent Web Management Portal
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/family-parent-dashboard 8443
+Restart=on-failure
+RestartSec=5
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

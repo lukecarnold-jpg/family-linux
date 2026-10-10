@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Test (Python ${{ matrix.python-version }} on ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Validate Python syntax
+        run: |
+          python -m compileall src tests
+
+      - name: Run pytest test suite
+        run: |
+          pytest -v --durations=10
+
+      - name: Run Family Linux CLI & bootstrap smoke tests
+        run: |
+          chmod +x scripts/bootstrap-prototype.sh scripts/build-autoinstall-iso.sh
+          ./scripts/bootstrap-prototype.sh --help
+          ./scripts/bootstrap-prototype.sh install --dry-run --non-interactive --parent-user "admin" --parent-name "Admin"
+          ./scripts/bootstrap-prototype.sh ctl status
+          ./scripts/bootstrap-prototype.sh ctl user add testchild --name "Test Child" --tier young_child
+          ./scripts/bootstrap-prototype.sh ctl app approve testchild tuxpaint
+          ./scripts/bootstrap-prototype.sh ctl time set testchild --daily-limit 90 --bedtime-weekday 20:00
+          ./scripts/bootstrap-prototype.sh ctl web block badsite.com
+          ./scripts/bootstrap-prototype.sh ctl audit
+          ./scripts/bootstrap-prototype.sh policyd --one-shot
+          ./scripts/bootstrap-prototype.sh autoinstall ci-autoinstall.yaml
+          test -f ci-autoinstall.yaml
