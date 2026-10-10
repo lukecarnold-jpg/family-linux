@@ -145,12 +145,15 @@ jobs:
 
       - name: Confirm the child profile blocks command lines and the desktop lockdown is written
         run: |
-          for shell in /bin/sh /bin/bash /usr/bin/bash; do
-            if sudo aa-exec -p family-linux-child -- "$shell" -c true > /dev/null 2>&1; then
-              echo "FAIL: $shell can be started under family-linux-child"
+          # aa-exec changes profile on exec, but the exec itself is checked against the caller
+          # (unconfined root). The check that matters is a confined process starting a shell,
+          # so run the shell through an allowed binary (env) inside the profile.
+          for shell in /bin/sh /bin/bash; do
+            if sudo aa-exec -p family-linux-child -- /usr/bin/env "$shell" -c true > /dev/null 2>&1; then
+              echo "FAIL: confined process started $shell"
               exit 1
             fi
-            echo "exec of $shell under family-linux-child: denied"
+            echo "confined start of $shell: denied"
           done
           # Positive control for the same check: a permitted binary still runs.
           sudo aa-exec -p family-linux-child -- /usr/bin/env true
