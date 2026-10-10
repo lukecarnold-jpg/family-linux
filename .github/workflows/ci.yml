@@ -299,6 +299,22 @@ jobs:
                   print(f"REUSE navigation to blocked youtube.com: loaded title={reuse.title()!r}")
               except Exception as exc:
                   print(f"REUSE navigation to blocked youtube.com: not loaded ({str(exc).splitlines()[0][:120]})")
+              # Repeat loads to measure an intermittent failure rate (fresh context each time).
+              for attempt in range(1, 6):
+                  ctx = browser.new_context()
+                  pg = ctx.new_page()
+                  try:
+                      pg.goto("https://www.cloudflare.com", timeout=30000)
+                      print(f"REPEAT cloudflare {attempt}: loaded")
+                  except Exception as exc:
+                      try:
+                          pg.wait_for_timeout(1000)
+                          import re as _re
+                          codes = sorted(set(_re.findall(r"ERR_[A-Z0-9_]+", pg.content())))[:3]
+                      except Exception:
+                          codes = []
+                      print(f"REPEAT cloudflare {attempt}: not loaded codes={codes} ({str(exc).splitlines()[0][:90]})")
+                  ctx.close()
               browser.close()
           PY
           chmod 644 /tmp/browser_check.py
