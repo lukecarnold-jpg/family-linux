@@ -189,11 +189,14 @@ def test_each_child_gets_a_distinct_port_and_their_own_rules():
 
 
 def test_nft_rules_redirect_dns_and_drop_dot_per_uid():
-    rules = render_nft([(1002, 5301), (1003, 5302)])
+    rules = render_nft([(1002, 5301, 5401), (1003, 5302, 5402)])
     assert "meta skuid 1002 udp dport 53 redirect to :5301" in rules
     assert "meta skuid 1002 tcp dport 53 redirect to :5301" in rules
     assert "meta skuid 1003 tcp dport 53 redirect to :5302" in rules
     assert "meta skuid 1002 tcp dport 853 drop" in rules
+    assert "meta skuid 1002 tcp dport { 80, 443 } redirect to :5401" in rules
+    assert "meta skuid 1003 tcp dport { 80, 443 } redirect to :5402" in rules
+    assert "meta skuid 1002 udp dport 443 drop" in rules
     assert "meta skuid 1003 udp dport 853 drop" in rules
     assert "add table inet family_linux" in rules and "delete table inet family_linux" in rules
 
@@ -285,7 +288,7 @@ def test_allowed_answers_feed_the_child_allow_list_but_blocked_answers_do_not(tm
 
 
 def test_nft_rules_drop_child_traffic_except_allowed_addresses():
-    rules = render_nft([(1002, 5301)])
+    rules = render_nft([(1002, 5301, 5401)])
     assert "set allow4_1002 { type ipv4_addr; flags timeout; }" in rules
     assert "meta skuid 1002 ip daddr 127.0.0.0/8 accept" in rules
     assert "meta skuid 1002 ip6 daddr ::1 accept" in rules

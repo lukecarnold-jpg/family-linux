@@ -27,6 +27,7 @@ REQUESTS_PATH = Path("/var/lib/family-linux/web-requests.json")
 SERVICE_NAME = "family-dnsd"
 NFT_TABLE = "family_linux"
 PORT_BASE = 5301
+TLS_PORT_BASE = 5401  # per-child HTTP(S) name-check proxy
 GENERAL_UPSTREAM = "1.1.1.1"  # used only for names the parent explicitly allows
 LISTEN_ADDRESS = "127.0.0.1"
 
@@ -36,8 +37,13 @@ def child_ports(policy: FamilyPolicy) -> Dict[str, int]:
     return {child.username: PORT_BASE + index for index, child in enumerate(policy.children)}
 
 
+def tls_ports(policy: FamilyPolicy) -> Dict[str, int]:
+    return {child.username: TLS_PORT_BASE + index for index, child in enumerate(policy.children)}
+
+
 def render_config(policy: FamilyPolicy, provider: str, uids: Optional[Dict[str, int]] = None) -> dict:
     ports = child_ports(policy)
+    proxy_ports = tls_ports(policy)
     uids = uids or {}
     family_upstream = DNS_SERVERS.get(provider, DNS_SERVERS[DNSProvider.CLEANBROWSING_FAMILY.value])[0]
     return {
@@ -51,6 +57,7 @@ def render_config(policy: FamilyPolicy, provider: str, uids: Optional[Dict[str, 
                 "username": child.username,
                 "uid": uids.get(child.username),
                 "port": ports[child.username],
+                "tls_port": proxy_ports[child.username],
                 "blocked": list(child.web_filter.blocked_domains),
                 "allowed": list(child.web_filter.allowed_domains),
             }
@@ -59,37 +66,40 @@ def render_config(policy: FamilyPolicy, provider: str, uids: Optional[Dict[str, 
     }
 
 
-def render_nft(child_uids: List[Tuple[int, int]]) -> str:
-    """Ruleset for (uid, port) pairs. Re-applying it replaces the table atomically.
+def render_nft(child_uids: List[Tuple[int, int, int]]) -> str:
+    """Ruleset for (uid, dns_port, tls_port) triples. Re-applying it replaces the table atomically.
 
-    Per child: DNS is redirected to the child's gateway port, DNS over TLS is dropped, and all
-    other outbound traffic is dropped unless it is loopback, part of an established
-    connection, or to an address the gateway has just returned in a lookup (the allow sets).
+    Per child: DNS is redirected to the child's gateway port; HTTP and HTTPS are redirected to the
+    name-check proxy; QUIC and DNS over TLS are dropped (they would bypass both checks); and all
+    other outbound traffic is dropped unless it is loopback, part of an established connection,
+    or to an address the gateway has just returned in a lookup (the allow sets).
     """
     lines = [
         f"add table inet {NFT_TABLE}",
         f"delete table inet {NFT_TABLE}",
         f"table inet {NFT_TABLE} {{",
     ]
-    for uid, _ in child_uids:
+    for uid, _, _ in child_uids:
         lines.append(f"  set allow4_{uid} {{ type ipv4_addr; flags timeout; }}")
         lines.append(f"  set allow6_{uid} {{ type ipv6_addr; flags timeout; }}")
     lines += [
         "  chain output_nat {",
         "    type nat hook output priority -100; policy accept;",
     ]
-    for uid, port in child_uids:
+    for uid, port, tls_port in child_uids:
         lines.append(f"    meta skuid {uid} udp dport 53 redirect to :{port}")
         lines.append(f"    meta skuid {uid} tcp dport 53 redirect to :{port}")
+        lines.append(f"    meta skuid {uid} tcp dport {{ 80, 443 }} redirect to :{tls_port}")
     lines += [
         "  }",
         "  chain output_filter {",
         "    type filter hook output priority 0; policy accept;",
     ]
-    for uid, _ in child_uids:
+    for uid, _, _ in child_uids:
         lines += [
             f"    meta skuid {uid} tcp dport 853 drop",
             f"    meta skuid {uid} udp dport 853 drop",
+            f"    meta skuid {uid} udp dport 443 drop",
             # Match the destination, not the output interface: a redirected packet's
             # interface is chosen before the redirect, so oif "lo" does not match it.
             f"    meta skuid {uid} ip daddr 127.0.0.0/8 accept",
@@ -148,7 +158,8 @@ class WebGateway:
         self.adapter.write_system_file(SERVICE_PATH, render_service(), mode=0o644)
 
         ports = child_ports(policy)
-        uid_pairs: List[Tuple[int, int]] = []
+        proxy_ports = tls_ports(policy)
+        uid_pairs: List[Tuple[int, int, int]] = []
         for child in policy.children:
             uid = self._uid(child.username)
             if uid is None:
@@ -156,7 +167,7 @@ class WebGateway:
                     continue
                 warnings.append(f"No Linux account '{child.username}' yet; web rules not active for this child")
                 continue
-            uid_pairs.append((uid, ports[child.username]))
+            uid_pairs.append((uid, ports[child.username], proxy_ports[child.username]))
 
         self.adapter.write_system_file(NFT_RULES_PATH, render_nft(uid_pairs), mode=0o644)
         if uid_pairs:

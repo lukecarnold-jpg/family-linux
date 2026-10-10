@@ -315,6 +315,8 @@ class ChildResolver:
         log: RequestLog,
         forward: Forwarder = forward_dns,
         allow_list: Optional[AddressAllowList] = None,
+        learned_addresses=None,
+        learned_names=None,
     ):
         self.username = username
         self.rules = rules
@@ -323,6 +325,10 @@ class ChildResolver:
         self.log = log
         self.forward = forward
         self.allow_list = allow_list
+        # Stores from tls_proxy (duck-typed: remember(key, seconds)). They let the HTTPS
+        # proxy check that a connection's address and name came from an allowed lookup.
+        self.learned_addresses = learned_addresses
+        self.learned_names = learned_names
 
     def answer(self, query: bytes, tcp: bool = False) -> bytes:
         try:
@@ -342,10 +348,18 @@ class ChildResolver:
 
         if decision == "default" and len(reply) >= 4 and (reply[3] & 0x0F) == RCODE_NXDOMAIN:
             self.log.record(self.username, name, "not resolved by family filter")
-        if self.allow_list is not None:
-            # Only addresses from answers the parent allowed (directly or by default) may be
-            # reached by this child. Blocked answers never reach this point.
-            self.allow_list.add(parse_answer_addresses(reply))
+        # Only answers the parent allowed (directly or by default) reach this point, so only their
+        # addresses and names become reachable. Blocked answers never do.
+        addresses = parse_answer_addresses(reply)
+        if addresses:
+            if self.allow_list is not None:
+                self.allow_list.add(addresses)
+            ttl = min(max(min(ttl for _, ttl in addresses), MIN_ALLOW_SECONDS), MAX_ALLOW_SECONDS)
+            if self.learned_addresses is not None:
+                for address, _ in addresses[:MAX_ADDRESSES_PER_ANSWER]:
+                    self.learned_addresses.remember(address, ttl)
+            if self.learned_names is not None:
+                self.learned_names.remember(name, ttl)
         return reply
 
 
@@ -389,21 +403,39 @@ def load_config(path: Path) -> dict:
 
 
 def run(config: dict) -> None:
-    """Starts one UDP and one TCP listener per child, plus the periodic request flush."""
+    """Starts DNS and HTTP(S) name-check listeners per child, plus the periodic request flush."""
+    from family_linux.security import tls_proxy  # imported here: tls_proxy depends on this module
+
     log = RequestLog(Path(config["requests_path"]))
     host = config.get("listen_address", "127.0.0.1")
     threads = []
     for child in config["children"]:
+        rules = DomainRules(child.get("blocked", []), child.get("allowed", []))
+        learned_addresses = tls_proxy.LearnedAddresses()
+        learned_names = tls_proxy.LearnedNames()
         resolver = ChildResolver(
             username=child["username"],
-            rules=DomainRules(child.get("blocked", []), child.get("allowed", [])),
+            rules=rules,
             family_upstream=config["family_upstream"],
             general_upstream=config["general_upstream"],
             log=log,
             allow_list=AddressAllowList(child["uid"]) if child.get("uid") is not None else None,
+            learned_addresses=learned_addresses,
+            learned_names=learned_names,
         )
         for target in (_serve_udp, _serve_tcp):
             thread = threading.Thread(target=target, args=(host, int(child["port"]), resolver), daemon=True)
+            thread.start()
+            threads.append(thread)
+        if child.get("tls_port") is not None:
+            ctx = tls_proxy.ProxyContext(
+                username=child["username"],
+                rules=rules,
+                learned_addresses=learned_addresses,
+                learned_names=learned_names,
+                log=log,
+            )
+            thread = threading.Thread(target=tls_proxy.serve, args=(host, int(child["tls_port"]), ctx), daemon=True)
             thread.start()
             threads.append(thread)
 

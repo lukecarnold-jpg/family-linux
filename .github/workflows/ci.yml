@@ -195,24 +195,37 @@ jobs:
           fi
           echo "DNS over TLS from child: blocked"
 
-      - name: Confirm a child can only reach addresses returned by their own lookups
+      - name: Confirm a child can only complete TLS to addresses and names from their own lookups
         run: |
           uid=$(id -u cikid)
           sudo nft list set inet family_linux allow4_$uid > /dev/null
-          # Control: the parent connects directly to an address no lookup has returned.
+          cat > /tmp/tls_check.py <<'PY'
+          import socket, ssl, sys
+          ip, sni = sys.argv[1], sys.argv[2]
+          ctx = ssl.create_default_context()
+          with socket.create_connection((ip, 443), timeout=8) as raw:
+              with ctx.wrap_socket(raw, server_hostname=sni) as tls:
+                  print("TLS handshake ok:", tls.version(), "address", ip, "name", sni)
+          PY
+          chmod 644 /tmp/tls_check.py
+          # Control: the parent reaches a server directly, without the child's redirect.
           python3 -c "import socket; socket.create_connection(('9.9.9.9', 443), timeout=10).close()"
           echo "parent direct connect to 9.9.9.9:443: ok"
-          # The child must not reach an address that no lookup returned (direct-IP bypass).
-          if sudo -u cikid python3 -c "import socket; socket.create_connection(('9.9.9.9', 443), timeout=5)" 2>/dev/null; then
-            echo "FAIL: child reached 9.9.9.9:443 without a lookup"; exit 1
-          fi
-          echo "child direct connect to 9.9.9.9:443 without a lookup: blocked"
-          # The child can reach an address returned by an allowed lookup.
           ip=$(sudo -u cikid getent ahostsv4 example.com | awk 'NR==1{print $1}')
           echo "child lookup example.com -> ${ip:-none}"
           test -n "$ip"
-          sudo -u cikid python3 -c "import socket, sys; socket.create_connection((sys.argv[1], 443), timeout=10).close()" "$ip"
-          echo "child connect to example.com's address after lookup: ok"
+          # Address no lookup returned: the child's handshake must fail.
+          if sudo -u cikid python3 /tmp/tls_check.py 9.9.9.9 example.com; then
+            echo "FAIL: child completed TLS to an address no lookup returned"; exit 1
+          fi
+          echo "child TLS to an address without a lookup: refused"
+          # Address and name both from the child's own allowed lookups: must succeed.
+          sudo -u cikid python3 /tmp/tls_check.py "$ip" example.com
+          # Learned address but a name the child never looked up (CDN shared address): refused.
+          if sudo -u cikid python3 /tmp/tls_check.py "$ip" tiktok.com; then
+            echo "FAIL: child completed TLS with a name it never looked up"; exit 1
+          fi
+          echo "child TLS to a shared address with an unlooked-up name: refused"
 
       - name: Confirm a blocked lookup becomes a request and approval unblocks it
         run: |
