@@ -1,98 +1,162 @@
 # Family Linux Development History
 
-This records how the project got to its current state, the decisions behind it, and the issues found in review. For the repository layout see [STRUCTURE.md](STRUCTURE.md).
+This records how the project got to its current state, the decisions behind it, the issues found in review, and what has been fixed. For the repository layout see [STRUCTURE.md](STRUCTURE.md).
 
-Git records every commit below with the date 2026-10-10. The commit dates therefore reflect when the history was written in this repository, not necessarily when each change was first drafted.
+Git records the early commits with the date 2026-10-10. Those dates reflect when the history was written in this repository, not necessarily when each change was first drafted.
 
 ## Commit timeline
 
 | Commit | Author | Summary |
 |--------|--------|---------|
 | `73dd9bc` | Luke Arnold | Initial commit |
-| `f18e5e3` | Luke Arnold | Initialize Family Linux with architecture, policy, and planning docs. Adds `docs/` (vision, architecture, roadmap), `config/default-policy.yaml`, and the first README and prototype script. |
-| `6d6bb06` | copilot-swe-agent[bot] (co-authored with lukecarnold-jpg) | Align design docs with Ubuntu, parent-child model, and installer flow. Rewrites README, vision, architecture, and roadmap around Ubuntu LTS. Adds `docs/installer.md`. Updates the default policy and the bootstrap script. |
+| `f18e5e3` | Luke Arnold | Initialize Family Linux with architecture, policy, and planning docs. |
+| `6d6bb06` | copilot-swe-agent[bot] (co-authored with lukecarnold-jpg) | Align design docs with Ubuntu, parent-child model, and installer flow. Adds `docs/installer.md`. |
 | `0022875` | Luke Arnold | Merge PR #1 `copilot/update-ubuntu-references` into `main`. |
+| `644a98e` | Luke Arnold | Implement the prototype with CI workflow. Adds the implementation, tests, `.gitignore`, `LICENSE`, `.github/workflows/ci.yml`, and these docs. |
 
-Branches: `main` (local and `origin/main`, both at `0022875`) and `origin/copilot/update-ubuntu-references` (at `6d6bb06`, now merged).
+The CI run for `644a98e` passed on `main`.
 
-## Working tree state
+## Current state
 
-At the time of this review, `main` is clean apart from the changes below. The implementation has never been committed.
+The work in the "Session 2" section below is uncommitted. Files changed or added in that session:
 
-- Modified: `scripts/bootstrap-prototype.sh`. It changed from a placeholder that printed planned actions to a full launcher with eight subcommands. The file mode also changed from `644` to `755`.
-- Untracked (never committed): `src/`, `tests/`, `pyproject.toml`, `config/chromium/`, `config/firefox/`, `config/systemd/`, `scripts/build-autoinstall-iso.sh`.
-- Generated and untracked: `__pycache__/` directories (Python 3.14 bytecode) and `.pytest_cache/`. No `.gitignore` exists.
-- No `LICENSE` file, although `pyproject.toml` declares MIT.
+- Modified: `.github/workflows/ci.yml`, `pyproject.toml`, `scripts/bootstrap-prototype.sh`, `scripts/build-autoinstall-iso.sh`, `src/family_linux/cli/family_ctl.py`, `src/family_linux/installer/wizard.py`, `src/family_linux/models.py`, `src/family_linux/parent_ui/server.py`, `src/family_linux/provisioner/autoinstall.py`, `src/family_linux/provisioner/system.py`, `src/family_linux/security/adapter.py`, `src/family_linux/security/app_guard.py`, `src/family_linux/security/apparmor.py`, `tests/test_cli.py`, `tests/test_security.py`.
+- Added: `tests/integration/test_linux_provisioning.py`, `tests/test_dashboard.py`, `tests/test_provisioning.py`, `tests/test_secrets.py`.
 
 ## Decisions log
 
-These decisions are recorded in the commit messages and docs. Each reflects the current direction, not a change the team has discussed.
+1. **Ubuntu LTS is the base distribution** (`6d6bb06`). Security uses Ubuntu's own mechanisms: users and groups, sudo, AppArmor, UFW, signed repositories. OpenBSD is a source of principles only.
+2. **One parent account, many child accounts.** Children are non-admin with no sudo. Enforced in `models.py`, the installer, the provisioner, and `verify`.
+3. **Installer is a 12-step flow** (`docs/installer.md`), with recommended and advanced modes.
+4. **Configuration is applied to a running system.** The provisioner applies a policy to users, firewall, DNS, browsers, AppArmor, and desktop filters. Disk partitioning is not implemented. Ubuntu itself is meant to be installed from autoinstall `user-data`.
+5. **Dry-run is the default off Linux and whenever not root.** Session 2 fixed a gap where the dry-run flag did not reach the policy and audit writers (see Session 2).
+6. **Passwords are never persisted** (Session 2). They exist in memory long enough to call `chpasswd` or to build the autoinstall hashes.
+7. **Save before apply** (Session 2). The policy is written before any system change, so a failed apply leaves the intended state on disk. Every step is idempotent, so re-running the apply converges.
+8. **The dashboard requires an access token and a session cookie** (Session 2). It binds to loopback only, checks the Host and Origin headers, and requires JSON bodies.
 
-1. **Ubuntu LTS is the base distribution.** Set in `6d6bb06`. The security model is built on Ubuntu's own mechanisms (users and groups, sudo, AppArmor, UFW, signed repositories). The project does not ship a custom security framework. OpenBSD is treated as a source of principles only.
-2. **One parent account, many child accounts.** The parent is a local administrator. Children are non-admin users with no sudo rights. `models.py` enforces this with `validate()`, and the constraint is repeated in the installer, the provisioner, and `family-ctl verify`.
-3. **Installer is a 12-step flow with recommended and advanced modes.** Set in `6d6bb06` and documented in `docs/installer.md`. The implementation in `installer/wizard.py` follows the same numbering.
-4. **Configuration is applied to a running system, not a fresh disk.** The provisioner (`provisioner/system.py`) takes a policy and applies it to users, firewall, DNS, browsers, AppArmor, and desktop filters. Disk partitioning is not implemented. The Ubuntu install itself is meant to come from autoinstall `user-data`, which is generated by `provisioner/autoinstall.py`.
-5. **Dry-run is the default off Linux.** `SystemAdapter` forces dry-run on any non-Linux host and when not root. Every provisioning path can therefore run on a developer Mac without changing it.
-6. **Policy is one YAML file with atomic writes and backups.** Writes go to a temp file and are then renamed into place, with mode `0600`. Each save makes a timestamped backup. Restore validates the backup before applying it.
-7. **Dashboard binds to localhost only.** `parent_ui/server.py` listens on `127.0.0.1:8443`. There is no authentication (see the findings below).
+## Session 1 review (prior review, before `644a98e`)
 
-## Implementation milestones
+Findings from reading the code. All listed here were still open at the start of Session 2 unless marked otherwise.
 
-These are inferred from the code and the test suite, since the work was not committed in steps.
+| # | Severity | Finding | Status |
+|---|----------|---------|--------|
+| 1 | High | Dashboard has no authentication; accepts POST from any origin with any Content-Type | **Fixed** (Session 2) |
+| 2 | High | Passwords stored in plaintext in `policy.yaml` and backups | **Fixed** for new saves (Session 2). Backups created before this change still hold old plaintext. |
+| 3 | High | Installer prompts used hardcoded default passwords; input echoed | **Fixed** (Session 2) |
+| 4 | High | `family-ctl verify` hardcoded two checks as passing and printed "complies 100%" | **Fixed** (Session 2) |
+| 5 | Medium | AppArmor profile in complain mode | **Fixed** (flag changed to enforce; attachment still missing, see open item 2) |
+| 6 | Medium | Two sudoers drop-ins with different paths | **Fixed**: both now use `/etc/sudoers.d/family-linux-admin` |
+| 7 | Medium | Child shell is `/usr/sbin/nologin`; may block desktop login | Open (needs a real desktop test) |
+| 8 | Medium | Autoinstall package list included `scratch3`, which is not in Ubuntu 24.04 apt | **Fixed** (removed; see Session 2, section C) |
+| 9 | Medium | ISO helper prints steps and does not build an ISO | Open |
+| 10 | Medium | Installer's advanced target disk captured but unused | **Fixed**: passed to autoinstall `storage.layout.match.path` (unverified against Subiquity; see Session 2, section C) |
+| 11 | Low | Fallback policy ignores `config/default-policy.yaml` | Open |
+| 12 | Low | `bootstrap-prototype.sh` with no arguments started the installer | **Fixed**: default is now `help` |
+| 13 | Low | No `.gitignore` | **Fixed** (`644a98e`) |
+| 14 | Low | No `LICENSE` | **Fixed** (`644a98e`) |
+| 15 | Low | Notification sends a shell string built by interpolation | Open (low risk today) |
+| 16 | Low | No tests for the dashboard or real Linux paths | **Fixed** (Session 2) |
 
-- Policy model, validation, and config persistence (`models.py`, `config.py`).
-- Audit log (`audit/logger.py`).
-- Security managers behind a single adapter (`security/`).
-- Provisioner that applies a whole policy (`provisioner/system.py`).
-- Subiquity autoinstall generator (`provisioner/autoinstall.py`).
-- Installer wizard with dry-run and non-interactive modes (`installer/wizard.py`).
-- Screen-time tracker and daemon (`screentime/`).
-- `family-ctl` administration CLI (`cli/family_ctl.py`).
-- Parent web dashboard (`parent_ui/server.py`).
-- Test suite (31 tests across seven files).
-- ISO helper script (`scripts/build-autoinstall-iso.sh`). It only generates `user-data`.
+## Session 2 review and changes
 
-## Verification status
+Session 2 worked through the gap list from the second review. Each item below records what was done and what was not.
 
-- **Unit tests:** 31 passed in this review, run with Python 3.14 in a scratch virtualenv (`pytest` and `pyyaml` installed). Run on macOS only.
-- **Linux:** the code has not been run on Ubuntu or any Linux host. Several provisioning paths can only be checked there (`useradd`, `ufw`, AppArmor, `systemd-resolved`, `loginctl`).
-- **Dashboard:** no tests. The HTTP API has never been exercised.
+### A. Linux-privileged integration tests and CI job (done)
 
-## Review findings
+- `tests/integration/test_linux_provisioning.py` runs real `useradd`, `usermod`, `passwd`, `visudo`, and `ufw` commands. It only runs as root on Linux with `FAMILY_LINUX_INTEGRATION=1`, and it skips everywhere else.
+- A `linux-integration` job in `.github/workflows/ci.yml` installs `ufw` and `apparmor-utils`, then runs those tests as root.
+- Passed in a local Ubuntu 24.04 container (privileged Docker).
 
-Findings from reading the code in this review. None have been fixed; the code is unchanged. Ordered roughly by risk.
+### B. Dashboard hardening and tests (done)
 
-### High
+- `make_handler()` takes its dependencies as parameters, so tests run against a temporary directory.
+- Every request needs the token: an `Authorization: Bearer` header, or the `fl_session` cookie.
+- The one-time link `/?token=…` sets an `HttpOnly; SameSite=Strict` cookie and redirects, so the token leaves the address bar.
+- Requests must have a loopback `Host` header, and any `Origin` header must match the dashboard. POSTs must be `application/json`, and bodies are capped at 64 KB.
+- The `Access-Control-Allow-Origin: *` header is removed.
+- Child passwords must be at least 8 characters, and invalid input returns 400 instead of an unhandled error.
+- Startup prints the one-time link with `flush=True`. Without the flush, a systemd journal or pipe would show it late or not at all.
+- `tests/test_dashboard.py` covers 14 cases. A live check with `curl` against a real server process confirmed 401, 200, 403, 415, and the cookie.
 
-1. **Parent dashboard has no authentication.** `parent_ui/server.py` accepts `POST` requests on `127.0.0.1:8443` and parses the body as JSON whatever the `Content-Type`. The `family-parent-dashboard.service` unit runs it as root. Any local process can add children, toggle accounts, or change the blocked and allowed domain lists. A web page open in a browser on the same machine (a child's browser, for example) could probably send a `text/plain` POST, which browsers do not pre-flight, and have it accepted. This is not yet tested in a browser. Possible fixes: a per-install token, a strict `application/json` check, and `Origin` and `Host` validation.
-2. **Passwords are stored in plaintext.** `ParentAccount.password` and `ChildAccount.password` are dataclass fields that `asdict()` writes into `policy.yaml`. Backups copy the same values. File mode `0600` is the only protection. The autoinstall path hashes passwords, but the policy file does not.
-3. **Hardcoded default passwords.** `installer/wizard.py` offers `FamilyPass123!` for the parent and `ChildPass123!` for each child as prompt defaults, so pressing Enter accepts them. The prompt uses plain `input()`, so the password is shown as typed. The `--parent-pass` flag also puts the password in the process list.
-4. **`family-ctl verify` reports checks it does not run.** In `cli/family_ctl.py`, the checks for "Exclusive parent sudoers configuration active" and "Managed browser lockdown active" are hardcoded `True`. The "Firewall default incoming deny" check is the only one that reads real policy state. `family-ctl verify` can still print "System complies 100%". `family-ctl web status` also prints SafeSearch as `ENFORCED` regardless of configuration. The `verify` output should be made honest before anyone relies on it.
+### C. Installer choices and the autoinstall output (partly done)
 
-### Medium
+- The installer's language, keyboard, and target disk now reach the autoinstall export. Before this, the export always used the defaults.
+- `--target-disk` is written to the storage layout as `match.path`, but only when given explicitly. The `match.path` key is unverified against Subiquity (no Subiquity runtime here).
+- `scratch3` was removed from the autoinstall package list (not in Ubuntu 24.04 apt).
+- **Not done:** the autoinstall is still the only install path. The wizard's network step is still a print statement.
 
-5. **AppArmor profile runs in complain mode.** `security/apparmor.py` declares `flags=(attach_disconnected,complain)`. In complain mode the kernel logs violations without blocking them, so the profile does not confine children. Enforce mode is needed for the stated goal.
-6. **Two sudoers drop-ins with different paths.** `security/users.py` writes `/etc/sudoers.d/family-linux-admin`. `provisioner/autoinstall.py` writes `/etc/sudoers.d/family-linux` with overlapping content. Both can be active. Keep one.
-7. **Child shell is `/usr/sbin/nologin`.** This is the model default. Some display managers refuse to start a session for a user whose shell is `nologin`. This has not been tested on Ubuntu.
-8. **Autoinstall package list needs checking.** `provisioner/autoinstall.py` lists `scratch3` as an apt package. Scratch 3 on Ubuntu is distributed as a snap, so this entry will probably fail to install. Other package names need the same check.
-9. **ISO build script does not build an ISO.** `scripts/build-autoinstall-iso.sh` generates `user-data` and prints `xorriso` steps for the user to run by hand. The El Torito boot arguments it prints are unverified against the Ubuntu ISO layout.
-10. **Installer prompts run before the target is known.** In advanced mode, `target_disk` is captured but never used. Recommended mode prints a disk target that nothing acts on. This matches the design in `docs/installer.md` for now, but the summary line can look more concrete than the code is.
-11. **Fallback policy ignores the repo template.** `config.py` `_build_from_baseline_yaml()` reads `config/default-policy.yaml` and then discards it. The fallback always produces a parent with no children.
-12. **`bootstrap-prototype.sh` defaults to `install`.** Running it with no arguments starts the installer. On Linux as root without `--dry-run`, a confirmed run applies changes. The default should be `help`.
+### D. Passwords (done)
 
-### Low
+- `ParentAccount.password` and `ChildAccount.password` are `repr=False` and are excluded from `FamilyPolicy.to_dict()`. The policy file and the API never contain them.
+- Policies loaded from older files still work. The plaintext values are used for provisioning, and the next save removes them. `tests/test_secrets.py` covers this.
+- Installer: defaults removed. Prompts use `getpass`. Non-interactive runs require `--parent-pass` (min 8 characters). The child spec needs a password, and `split(":", 3)` keeps colons inside passwords.
+- `build-autoinstall-iso.sh`, `bootstrap-prototype.sh autoinstall`, and the CI smoke test now require `PARENT_PASS`.
 
-13. **No `.gitignore`.** `__pycache__/` and `.pytest_cache/` would be committed by a plain `git add .`.
-14. **No `LICENSE` file.** `pyproject.toml` says MIT.
-15. **Shell string in notifications.** `screentime/daemon.py` builds `su - <user> -c 'notify-send ... "<title>" "<message>"'` by interpolating strings. Today the strings come from internal messages, so the risk is low, but any user-supplied text added later would be an injection risk. Pass arguments as a list instead.
-16. **Test gaps.** No tests for `parent_ui/server.py`, for the real Linux code paths, or for the effect of the AppArmor profile.
+### E. Honest `verify` (done)
 
-## Suggested next steps
+- Policy checks always run. Live checks run only on Linux; elsewhere they are reported as `[SKIP]`, and the overall result is `[INCOMPLETE]`, never `[SUCCESS]`.
+- Live checks: parent sudoers drop-in present and passes `visudo -cf`; UFW active with deny incoming; Firefox and Chromium managed policy files present; AppArmor profile loaded in enforce mode (asked of the kernel with `aa-status`, not read from the file); unattended-upgrades enabled.
+- A missing tool is reported as a FAIL with a reason. It no longer raises an exception.
+- `family-ctl web status` derives SafeSearch, incognito, and DevTools status from the policy instead of printing fixed text.
 
-In order of value:
+### F. Apply ordering and failure recovery (done)
 
-1. Add authentication and content-type checks to the dashboard (finding 1). This is a prerequisite for any use beyond a dev machine.
-2. Stop storing plaintext passwords and remove the default passwords (findings 2 and 3).
-3. Make `family-ctl verify` report real state, and switch the AppArmor profile to enforce mode after testing it (findings 4 and 5).
-4. Run the provisioner in a throwaway Ubuntu LTS VM and record the results here.
-5. Add a `.gitignore` and a `LICENSE`, then commit the implementation in reviewable steps. The current single untracked tree makes history hard to follow.
+- `apply_policy` saves the policy first, then applies the system layers. A failure raises `ProvisioningError`, which names the last completed step and says to re-run the apply.
+- Before this, a failure partway through left the system changed and the policy file out of date. This happened in a live container run: the `/etc/hosts` write failed after users were created.
+- The installer and the dashboard report `ProvisioningError` cleanly.
+- **Not done:** a pre-apply diff or dry-run preview of changes, and rollback of completed steps.
+
+### G. Security updates (partly done)
+
+- `regular_security_updates` is now applied: the provisioner installs `unattended-upgrades` if it is missing, then runs `systemctl enable --now`. A failure is a warning.
+- Before this, the policy field was stored but never used.
+
+### H. Bugs found by testing (fixed)
+
+- **Dry-run leaked to real files.** `SystemProvisioner` and `AppGuard` created `AuditLogger()` and `PolicyConfigManager()` without the dry-run flag. A simulated install still wrote the real audit log (on Linux) and `~/.config/family-linux/policy.yaml` (on macOS). Fixed, with a regression test in `tests/test_security.py`. Test artifacts left in the home directory on this Mac were removed.
+- **Unit tests modified the real system when run as root on Linux.** `test_cli.py` built a live `FamilyCtl`, which wrote `/etc/hosts`, `/var/log/family-linux`, and `/var/lib/family-linux`. The fixture now simulates system writes and uses temporary files for usage and audit data.
+- **Bind-mounted files could not be written.** `write_system_file` used an atomic rename, which fails on bind-mounted files such as `/etc/hosts` in containers. It now falls back to an in-place write. Also, the temp file was named with `with_suffix`, which could collide: `family-linux-dns.conf` and `family-linux-dns.tmp` mapped to the same temp file. It now appends `.tmp` to the full name.
+- **AppArmor message contradicted the code.** The warning said "profile written but not enforced", but the profile was only written when AppArmor was active. The profile is now always written, and the warning is accurate.
+
+### I. CLI and tests (done)
+
+- `family-ctl user add --password` enforces the minimum length.
+- The existing test that asserted the hardcoded "complies 100%" message was replaced.
+
+### Not done in Session 2
+
+- **Child session lockdown** (gap 2). The architecture requires no terminal or shell workflow for children. The code hides desktop entries only. A terminal is still reachable by keyboard shortcut, file manager, or similar. This needs a real GNOME session to design and test, and a container cannot run one.
+- **Browser policy on Ubuntu** (gap 3). `apt-cache` in Ubuntu 24.04 shows `firefox` and `chromium-browser` as transitional packages that install snaps. The managed policy files are written to `/etc/firefox/policies` and `/etc/chromium/policies`. Whether snap builds read those paths is unverified. Snapd cannot run in a container here.
+- **Packaging** (gap 6). Nothing installs the console scripts or the systemd units (`/usr/local/bin`, `/etc/systemd/system`).
+- **ISO build** (gap 9). `build-autoinstall-iso.sh` still prints manual steps.
+- **Child shell** (finding 7). Needs a real login test.
+- **Notification quoting** (finding 15). Low risk. Pass arguments as a list.
+- **Backups still hold old plaintext** (finding 2). Scrub or re-create backups from policies saved after this change.
+
+## Verification matrix (Session 2)
+
+| Environment | What ran | Result |
+|-------------|----------|--------|
+| macOS, Python 3.14 (scratch venv) | Full suite | 53 passed, 4 skipped (integration tests skip off Linux) |
+| Ubuntu 24.04 container, root, `FAMILY_LINUX_INTEGRATION=1` | Full suite | 56 passed, 1 skipped (Linux-only `verify` test) |
+| Ubuntu 24.04 container, non-root (CI test job) | Full suite | 52 passed, 5 skipped |
+| Ubuntu 24.04 container, root | Live non-dry-run install with one child, then `verify` | Install exit 0 with two warnings (AppArmor not active; unattended-upgrades enable failed without a running init). `verify`: 9 PASS, 1 FAIL (AppArmor not loaded: kernel has no AppArmor). |
+| Ubuntu 24.04 container, root | Dashboard process, `curl` | 401 without token; 200 with bearer; 403 bad Host; 415 form POST; 400 short password; cookie set on link |
+| Ubuntu 24.04 container | Plaintext search across `/etc/family-linux`, `/etc/firefox`, `/etc/chromium`, `/etc/apparmor.d` | No matches |
+
+Limitations of the container runs:
+
+- No init (PID 1) is systemd. `systemctl is-enabled unattended-upgrades` reports `enabled` because the package enables its unit on install, but `systemctl enable --now` fails, so the container cannot show the service running. On a real Ubuntu host this check is meaningful; in a container it is not proof of a running service.
+- No snapd, no desktop session, and `/etc/hosts` is a bind mount.
+- AppArmor is not active in the container, so the "loaded in enforce mode" check fails there. That is the correct result for this environment. Confirming it passes needs a VM or a host with AppArmor enabled.
+
+## Open items, in priority order
+
+1. Run the live install and `verify` on a real Ubuntu VM (with AppArmor and systemd running). The container cannot pass the AppArmor check or show a running service.
+2. Verify that the AppArmor profile confines anything. The profile is named but has no attachment (no path or `attach` rule), so it may not confine any process even when loaded. Check whether `aa-status` shows it attached to a process, then add the attachment.
+3. Child session lockdown (see Not done).
+4. Test the child login path with a real GNOME or Ubuntu session (finding 7).
+5. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
+6. Add a pre-apply plan (dry-run diff) and consider rollback.
+7. Packaging: install the console scripts and systemd units.
+8. Scrub or recreate backups that hold old plaintext passwords.

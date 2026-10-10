@@ -2,10 +2,10 @@
 
 Family Linux is a private, prototype-stage project for a child-safe Ubuntu LTS desktop that one parent can manage without expert Linux knowledge.
 
-The repository now holds a working Python prototype: an installer flow, a parent CLI, a local parent web dashboard, a screen-time enforcement daemon, and generators for browser, firewall, DNS, and AppArmor policy. It configures a running Ubuntu system. It does not yet install Ubuntu or build a bootable ISO, and enforcement has not been validated on a real Ubuntu machine.
+The repository holds a working Python prototype: an installer flow, a parent CLI, a local parent web dashboard, a screen-time enforcement daemon, and generators for browser, firewall, DNS, and AppArmor policy. It configures a running Ubuntu system. It does not yet install Ubuntu or build a bootable ISO, and it has not been validated on a real Ubuntu desktop.
 
 - Repository layout: [STRUCTURE.md](STRUCTURE.md)
-- Development history and known issues: [DEV_HIST.md](DEV_HIST.md)
+- Development history, review findings, and open items: [DEV_HIST.md](DEV_HIST.md)
 
 ## Project direction
 
@@ -25,31 +25,66 @@ The repository now holds a working Python prototype: an installer flow, a parent
 
 Family Linux is inspired by OpenBSD discipline (minimal services, least privilege, and auditability), but it uses Ubuntu-native security and administration models rather than a custom security stack.
 
+Current protections in the prototype:
+
+- The parent dashboard listens on `127.0.0.1` only, requires an access token, and rejects cross-origin and non-JSON requests.
+- Passwords are never written to the policy file or the API. They are used once to set the account password.
+- Saving the policy happens before system changes, so a failed apply can be re-run to finish.
+- `family-ctl verify` reports real system state on Linux and says so when a check cannot run.
+
 ## Quick start
 
 Requires Python 3.9 or newer.
 
 ```bash
-python3 -m pip install -e ".[dev]"    # installs pyyaml, pytest, pytest-cov
-./scripts/bootstrap-prototype.sh test # run the test suite (31 tests)
+python3 -m pip install -e ".[dev]"      # pyyaml, pytest, pytest-cov
+./scripts/bootstrap-prototype.sh test   # run the test suite
 ./scripts/bootstrap-prototype.sh install --dry-run
 ./scripts/bootstrap-prototype.sh ctl status
-./scripts/bootstrap-prototype.sh dashboard   # http://127.0.0.1:8443
+./scripts/bootstrap-prototype.sh dashboard
 ```
 
-Outside Linux every system change is simulated, so the commands above are safe to run on a development machine. On Linux, `install` without `--dry-run` applies changes to the system after you confirm the summary. Use `--dry-run` first.
+Outside Linux, every system change is simulated, so these commands are safe on a development machine. On Linux, `install` without `--dry-run` changes the system after you confirm the summary, so run `--dry-run` first.
+
+### Dashboard sign-in
+
+`dashboard` prints a one-time link:
+
+```
+[Family Linux] Open this one-time link to sign in: http://127.0.0.1:8443/?token=…
+```
+
+Open it in a browser on the same machine. It sets a session cookie and redirects, so the token leaves the address bar. Set `FAMILY_LINUX_DASHBOARD_TOKEN` to choose the token yourself.
 
 ### Commands
 
 | Command | What it does |
 |---------|--------------|
+| `help` (default) | Shows usage |
 | `install [--dry-run]` | Runs the 12-step interactive installer |
+| `install --dry-run --non-interactive --parent-pass PASS [--child user:Name:tier:PASS]…` | Unattended run; `--parent-pass` is required (min 8 characters) |
 | `dashboard [port]` | Starts the parent web dashboard on `127.0.0.1` (default port 8443) |
 | `ctl <args>` | Runs the `family-ctl` parent CLI (`status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify`) |
 | `policyd [--one-shot]` | Runs the screen-time and curfew enforcement daemon |
-| `verify` | Runs the baseline check (see known issues in DEV_HIST.md before relying on it) |
+| `verify` | Checks the baseline (see below) |
 | `test` | Runs the pytest suite |
-| `autoinstall FILE` | Writes an Ubuntu Subiquity autoinstall `user-data` file |
+| `autoinstall FILE` | Writes an Ubuntu Subiquity autoinstall `user-data` file; needs `PARENT_PASS` in the environment |
+
+### What `verify` checks
+
+Policy checks run everywhere. Live checks run only on Linux and read the real system:
+
+- parent sudoers drop-in present and valid (`visudo -cf`)
+- UFW active with deny incoming
+- Firefox and Chromium managed policy files present
+- AppArmor child profile loaded in enforce mode (asked of the kernel)
+- unattended security upgrades enabled
+
+On any other host, the live checks are reported as `[SKIP]` and the result is `[INCOMPLETE]`, never `[SUCCESS]`. A missing tool is a `[FAIL]` with the reason.
+
+### Integration tests (Linux, root)
+
+`tests/integration/` runs real `useradd`, `passwd`, `visudo`, and `ufw` commands. It only runs as root on Linux with `FAMILY_LINUX_INTEGRATION=1`, and CI runs it in a dedicated job on an ephemeral runner. Do not run it on a workstation.
 
 ## Repository layout
 
@@ -57,28 +92,30 @@ Outside Linux every system change is simulated, so the commands above are safe t
 - `/config`: policy templates, browser policy templates, and systemd units
 - `/scripts`: bootstrap launcher and ISO helper
 - `/src/family_linux`: Python implementation
-- `/tests`: pytest suite
+- `/tests`: pytest suite, including `tests/integration/`
 
 ## Current status
 
 Implemented (prototype level):
 
-- Policy model with validation, saved with backups to a single YAML file
-- Parent CLI for child accounts, app approvals, screen-time limits, web block and allow lists, audit log, and backups
-- Parent web dashboard (JSON API and single page)
+- Policy model with validation, saved with backups to one YAML file
+- Parent CLI for child accounts, app approvals, screen-time limits, web block and allow lists, audit log, backups, and baseline verification
+- Parent web dashboard with token sign-in (JSON API and single page)
 - Screen-time tracker and enforcement daemon
-- Generators for firewall (UFW), DNS filtering, Firefox and Chromium policies, AppArmor profile, and desktop app filters
-- Ubuntu autoinstall `user-data` generator
+- Generators for firewall (UFW), DNS filtering, Firefox and Chromium policies, the AppArmor profile, and desktop app filters
+- Ubuntu autoinstall `user-data` generator (language, keyboard, and target disk carried through)
+- Live install on Ubuntu 24.04 verified in a container: accounts, sudoers, UFW, and the policy file
 
 Not yet implemented, or not validated:
 
 - Installation to disk. The installer does not partition or install Ubuntu.
 - A bootable ISO. `scripts/build-autoinstall-iso.sh` prints manual steps.
-- Validation on a real Ubuntu LTS system. No Linux test run has been done.
-- Authentication on the parent dashboard, which currently has none.
-- Hardened defaults. Passwords are stored in plaintext and the installer offers hardcoded defaults.
+- Child session lockdown. Only desktop menu entries are hidden; a terminal is still reachable.
+- Confirmed browser policy on Ubuntu, where Firefox and Chromium are snaps.
+- The AppArmor profile is not yet attached to any process, so it may confine nothing.
+- Validation on a real Ubuntu VM with AppArmor and systemd running.
 
-The full list of issues, with file references and suggested fixes, is in [DEV_HIST.md](DEV_HIST.md#review-findings).
+The full list, with file references, is in [DEV_HIST.md](DEV_HIST.md).
 
 Design documents:
 
@@ -89,7 +126,7 @@ Design documents:
 
 ## License
 
-Declared as MIT in `pyproject.toml`. A `LICENSE` file has not been added yet.
+MIT. See [LICENSE](LICENSE).
 
 ## Privacy
 

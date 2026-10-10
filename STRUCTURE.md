@@ -10,6 +10,10 @@ family-linux/
 ├── STRUCTURE.md           This file
 ├── DEV_HIST.md            Development history and review findings
 ├── pyproject.toml         Package metadata, dependencies, entry points, pytest config
+├── LICENSE                MIT
+├── .gitignore             Ignores bytecode, pytest cache, build output, ISO images
+├── .github/workflows/
+│   └── ci.yml             Test matrix (Python 3.9–3.13, Ubuntu and macOS) and privileged Linux job
 ├── docs/                  Design documents (vision, architecture, installer, roadmap)
 ├── config/                Policy templates and browser/systemd configuration
 ├── scripts/               Bootstrap launcher and ISO build helper
@@ -17,7 +21,7 @@ family-linux/
 └── tests/                 pytest suite
 ```
 
-Generated folders such as `__pycache__/` and `.pytest_cache/` appear inside the tree but are not ignored by git (there is no `.gitignore` yet).
+Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.gitignore`.
 
 ## Documentation (`docs/`)
 
@@ -61,14 +65,14 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` appear inside the 
 | Module | Role | Key names |
 |--------|------|-----------|
 | `__init__.py` | Package version | `__version__` |
-| `models.py` | Data model and policy rules: accounts, age tiers, time limits, web filter, app policy, security baseline. Holds the constants for DNS servers, default app lists, and always-blocked commands. | `FamilyPolicy`, `ParentAccount`, `ChildAccount`, `SecurityPolicy`, `AgeTier`, `DNSProvider`, `DEFAULT_APPROVED_APPS`, `ALWAYS_BLOCKED_COMMANDS` |
+| `models.py` | Data model and policy rules: accounts, age tiers, time limits, web filter, app policy, security baseline. Holds the constants for DNS servers, default app lists, always-blocked commands, and the minimum password length. Passwords are held in memory only and are excluded from `to_dict()`. | `FamilyPolicy`, `ParentAccount`, `ChildAccount`, `SecurityPolicy`, `AgeTier`, `DNSProvider`, `MIN_PASSWORD_LENGTH`, `DEFAULT_APPROVED_APPS`, `ALWAYS_BLOCKED_COMMANDS` |
 | `config.py` | Load, save (atomic, `0600`), back up, and restore the policy YAML | `PolicyConfigManager` |
 | `audit/logger.py` | Append-only JSON-lines audit log with read and filter | `AuditLogger`, `AuditRecord` |
 | `installer/wizard.py` | Installer state machine and the 12 steps. Non-interactive mode builds the policy from flags. | `InstallerWizard` |
-| `provisioner/system.py` | Applies a full policy across users, firewall, DNS, browsers, AppArmor, desktop filters, then saves and audits | `SystemProvisioner.apply_policy` |
+| `provisioner/system.py` | Saves the policy first, then applies users, firewall, DNS, browsers, AppArmor, security updates, and desktop filters. Failures raise `ProvisioningError` naming the last completed step. | `SystemProvisioner.apply_policy`, `ProvisioningError` |
 | `provisioner/autoinstall.py` | Generates Ubuntu Subiquity autoinstall `user-data` (users, packages, late commands) | `SubiquityAutoinstallGenerator` |
-| `cli/family_ctl.py` | `status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify` subcommands | `FamilyCtl`, `format_table` |
-| `parent_ui/server.py` | `http.server` dashboard: embedded HTML page plus JSON API (`/api/policy`, `/api/child`, `/api/web/block`, and others) | `DashboardRequestHandler`, `run_server` |
+| `cli/family_ctl.py` | `status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify` subcommands. `verify` reads real state for live checks on Linux. | `FamilyCtl`, `format_table` |
+| `parent_ui/server.py` | `http.server` dashboard: embedded HTML page plus JSON API (`/api/policy`, `/api/child`, `/api/web/block`, and others). Requires a token (bearer header or session cookie), checks Host and Origin, requires JSON bodies. Dependencies are injected via `make_handler()`. | `make_handler`, `run_server` |
 | `screentime/tracker.py` | Per-day usage minutes in JSON; evaluates quota and curfew | `ScreenTimeTracker` |
 | `screentime/daemon.py` | Polls logged-in users, sends warnings, terminates sessions at limit or curfew | `ScreenTimeDaemon` |
 
@@ -78,7 +82,7 @@ Each manager takes a `SystemAdapter`, so the same code path runs in simulation.
 
 | Module | Role | Key names |
 |--------|------|-----------|
-| `adapter.py` | Runs commands and writes files. Forces dry-run on non-Linux and when not root. | `SystemAdapter`, `CommandResult` |
+| `adapter.py` | Runs commands and writes files. Forces dry-run on non-Linux and when not root. Writes atomically, falling back to an in-place write for bind-mounted files. | `SystemAdapter`, `CommandResult` |
 | `users.py` | Creates parent and child accounts, groups (`family-parent`, `family-children`), sudoers, password, home permissions (`0700`) | `UserManager` |
 | `firewall.py` | UFW baseline: deny incoming, allow outgoing, block legacy outbound ports | `FirewallManager` |
 | `dns_filter.py` | systemd-resolved drop-in with family DNS servers; managed `/etc/hosts` block section | `DNSFilterManager` |
@@ -107,7 +111,7 @@ Note: `SystemAdapter` treats any non-Linux host as dry-run, so on macOS every sy
 
 ## Tests (`tests/`)
 
-31 tests across seven files. Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`.
+Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. Results are in [DEV_HIST.md](DEV_HIST.md#verification-matrix-session-2).
 
 | File | Covers |
 |------|--------|
@@ -115,11 +119,15 @@ Note: `SystemAdapter` treats any non-Linux host as dry-run, so on macOS every sy
 | `test_config.py` | Save, backup, restore, and validation in `PolicyConfigManager` |
 | `test_audit.py` | Audit log writes, reads, and filters |
 | `test_installer.py` | Non-interactive wizard validation, dry-run apply, Subiquity generator |
-| `test_cli.py` | `family-ctl` commands end to end in simulation |
+| `test_cli.py` | `family-ctl` commands in simulation, isolated from real paths; `verify` is `[INCOMPLETE]` off Linux |
 | `test_screentime.py` | Usage tracking, quota and curfew evaluation, one enforcement cycle |
-| `test_security.py` | Security managers in simulation (users, firewall, browser, DNS, AppArmor, app guard) |
+| `test_security.py` | Security managers in simulation; dry-run reaches policy and audit writers |
+| `test_dashboard.py` | Live HTTP server: token auth, cookie and redirect, Host and Origin checks, JSON and size rules, password length |
+| `test_secrets.py` | Passwords never serialised, never in repr, dropped from files on next save |
+| `test_provisioning.py` | Save-before-apply ordering and the `ProvisioningError` message |
+| `integration/test_linux_provisioning.py` | Real accounts, sudoers, and UFW. Root on Linux with `FAMILY_LINUX_INTEGRATION=1` only; skipped elsewhere |
 
-Not covered by tests: `parent_ui/server.py` (the HTTP API), the real Linux code paths, and the AppArmor profile's actual effect.
+The integration tests run in the `linux-integration` CI job. They are not run by the default test command.
 
 ## Dependencies
 
