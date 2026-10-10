@@ -620,6 +620,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 SESSION_COOKIE = "fl_session"
 MAX_BODY_BYTES = 64 * 1024
+MAX_DRAIN_BYTES = 1024 * 1024
 DEFAULT_PORT = 8443
 
 
@@ -754,6 +755,9 @@ def make_handler(
 
             length = int(self.headers.get("Content-Length", 0) or 0)
             if length > MAX_BODY_BYTES:
+                # Read a bounded amount so the client sees this reply rather than a connection reset.
+                self.rfile.read(min(length, MAX_DRAIN_BYTES))
+                self.close_connection = True
                 self._send_error_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "Request body too large.")
                 return
             try:

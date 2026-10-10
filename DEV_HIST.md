@@ -190,13 +190,43 @@ Web filtering (answer to the parent's question):
   - **Chromium wildcard syntax is unverified.** The Chromium URL blocklist still gets `http://*.adult`. I did not change it because I could not check Chromium's wildcard format here.
   - **Snap builds.** Ubuntu's Firefox and Chromium are snaps, so the managed policy files may not apply (see open item on browser policy).
 
+## Session 6: per-child web filtering and request approval
+
+Design: each child's DNS is enforced by a per-child gateway, not by machine-wide browser or hosts rules. Machine-wide rules applied one child's settings to everyone, including the parent.
+
+- **Resolver** (`security/dns_gateway.py`): stdlib-only DNS server, UDP and TCP, one listener per child on loopback. Blocked names get `0.0.0.0` (AAAA gets an empty answer). Allowed names go to an unfiltered upstream. Everything else goes to the family-safe upstream from the policy. Allow rules take precedence over block rules. The `*.name` wildcard matches hosts under `name`, not `name` itself.
+- **Redirect** (`security/web_gateway.py`): an nftables table redirects each child's port 53 traffic (UDP and TCP, any destination) to that child's listener, matched by Linux UID. DNS over TLS and QUIC (port 853) are dropped for children.
+- **Service**: `family-dnsd.service` runs the gateway as root with the Python interpreter that provisioned it.
+- **Requests (C)**: blocked lookups and names the family upstream refuses (NXDOMAIN) are recorded per child. `family-ctl web requests` lists them. `web approve CHILD DOMAIN` allows the domain for that child and clears the request. `web deny` dismisses it, and the domain stays blocked. The dashboard has `GET /api/web/requests` and `POST /api/web/approve`. There is no dashboard page yet.
+- **Removed**: the browser URL block and allow lists (managed browser policy is machine-wide, so per-child lists could not be expressed) and the machine-wide hosts blocklist. The provisioner clears any hosts block left by an earlier version.
+- **CLI**: `web block` and `web allow` take `--child`. Without it they apply to all children, as before.
+
+Verified on the GitHub Ubuntu VM (live job):
+- The gateway service runs and the nftables table is present.
+- A child's lookup of `tiktok.com` (blocked by default) returns `0.0.0.0`. The parent's lookup resolves normally.
+- A child's UDP query addressed to `8.8.8.8` is answered by the gateway with `0.0.0.0`, so the redirect catches queries to outside resolvers.
+- DNS over TLS from a child is dropped.
+- `omegle.com` appears in `web requests`, and after `web approve` the child's lookup resolves normally.
+
+Found while testing:
+- A TCP connect from a child to `8.8.8.8:53` succeeds, because the redirect sends it to the gateway. The test checks the answer rather than the connection.
+- The oversized-body test failed on macOS: the server replied 413 without reading the body, so the client saw a connection reset. The server now drains up to 1 MB before replying and closes the connection.
+
+Known limits (not closed by this design):
+- **Direct IP access.** A child who connects to an IP address directly bypasses DNS filtering. Stopping this needs an allow-list of resolved addresses, which is more work.
+- **Non-browser DNS-over-HTTPS.** Browsers are set to use the system resolver, but other apps can still use DoH to a public IP.
+- **Chromium wildcard syntax** is no longer used, since browser URL lists were removed. Chromium is not affected by this design.
+- **Gateway availability.** If the gateway is down, the child's DNS fails closed (queries time out) rather than falling back. The restart policy is `on-failure`.
+- **No dashboard page** for requests yet. The API exists.
+
 ## Open items, in priority order
 
-1. Web filtering design: decide how per-child rules work when browser and DNS policy are machine-wide (see Session 5).
-2. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
-3. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
-4. Extend the VM job to launch each approved app under the profile (only `/bin/true`, `env`, and `cat` have been exercised).
-5. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
-6. Add a pre-apply plan (dry-run diff) and consider rollback.
-7. Packaging: install the console scripts and systemd units.
-8. Scrub or recreate backups that hold old plaintext passwords.
+1. Close direct-IP bypass for children (see Session 6, known limits).
+2. Dashboard page for web requests (API exists).
+3. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
+4. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
+5. Extend the VM job to launch each approved app under the profile (only `/bin/true`, `env`, and `cat` have been exercised).
+6. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
+7. Add a pre-apply plan (dry-run diff) and consider rollback.
+8. Packaging: install the console scripts and systemd units.
+9. Scrub or recreate backups that hold old plaintext passwords.
