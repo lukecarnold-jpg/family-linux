@@ -175,13 +175,25 @@ jobs:
 
       - name: Confirm a child cannot use DNS outside the gateway
         run: |
-          if sudo -u cikid timeout 5 bash -c 'exec 3<>/dev/tcp/8.8.8.8/53' 2>/dev/null; then
-            echo "FAIL: child reached 8.8.8.8:53 directly"; exit 1
-          fi
+          # Port 53 to any address is redirected to the child's gateway. A query sent to 8.8.8.8
+          # must therefore be answered by the gateway, which returns 0.0.0.0 for a blocked name.
+          sudo -u cikid python3 - <<'PY'
+          import socket, struct
+          labels = b"".join(bytes([len(p)]) + p.encode() for p in "tiktok.com".split(".")) + b"\0"
+          query = struct.pack("!HHHHHH", 0x4242, 0x0100, 1, 0, 0, 0) + labels + struct.pack("!HH", 1, 1)
+          sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+          sock.settimeout(5)
+          sock.sendto(query, ("8.8.8.8", 53))
+          reply, _ = sock.recvfrom(512)
+          answer = reply[-4:]
+          print("child query to 8.8.8.8 for tiktok.com answered with:", ".".join(str(b) for b in answer))
+          assert answer == b"\0\0\0\0", "query to an outside resolver was not intercepted"
+          PY
+          # DNS over TLS is dropped for children.
           if sudo -u cikid timeout 5 bash -c 'exec 3<>/dev/tcp/1.1.1.1/853' 2>/dev/null; then
             echo "FAIL: child reached DNS over TLS"; exit 1
           fi
-          echo "direct DNS and DNS over TLS from child: blocked"
+          echo "DNS over TLS from child: blocked"
 
       - name: Confirm a blocked lookup becomes a request and approval unblocks it
         run: |
