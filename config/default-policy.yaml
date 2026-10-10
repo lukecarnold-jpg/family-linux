@@ -1,36 +1,53 @@
-# Default Policy
+# Family Linux default policy (design-stage baseline)
 
-child:
+identity:
+  parent:
+    required: true
+    max_accounts: 1
+    role: local_admin
+    sudo_access: true
+  child:
+    min_accounts: 0
+    max_accounts: flexible
+    role: standard_user
+    sudo_access: false
+
+parent_management:
+  can_create_child_accounts: true
+  can_disable_child_accounts: true
+  can_manage_child_app_access: true
+  can_manage_child_browsing_policy: true
+  can_manage_time_limits: true
+  can_view_audit_logs: true
+
+child_defaults:
   shell_access: false
   package_installation: false
   system_settings: false
   internet_policy: restricted
   app_allow_list: true
 
-parent:
-  admin_access: true
-  child_management: true
-  app_approvals: true
-  browsing_policy_management: true
-  logs_access: true
-
-admin:
-  maintenance: true
-  system_updates: true
-  policy_review: true
-  privileged_recovery: true
-
 security:
-  default_firewall: deny_incoming
-  no_remote_exploration: true
-  restricted_repositories: true
+  distro_base: ubuntu_lts
+  privilege_model: unix_users_groups
+  admin_escalation: sudo_for_parent_only
+  apparmor: where_applicable
+  firewall_default: deny_incoming
   package_verification_required: true
+  trusted_repositories_only: true
+  regular_security_updates: true
 
 desktop:
-  default_session: kiosk
+  default_session: child_friendly
   launcher_mode: approved_apps_only
   browser_mode: family_safe
   terminal_available_to_child: false
+
+installer:
+  mode_default: recommended
+  advanced_mode_available: true
+  require_summary_before_apply: true
+  validate_inputs_before_apply: true
 
 policy:
   screen_time: enabled

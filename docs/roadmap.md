@@ -1,54 +1,50 @@
 # Family Linux Roadmap
 
-## Phase 0: Project definition
+## Phase 0: Direction lock
 
-- define project scope and product promises
-- lock in the child-safe and parent-managed design
-- confirm the private repo foundation and contribution workflow
+- confirm Ubuntu as base distribution and LTS support policy
+- confirm Ubuntu-standard security model language
+- confirm one-parent/multi-child account model
+- keep repository private during design validation
 
-## Phase 1: Baseline design
+## Phase 1: Baseline architecture
 
-- choose a hardened Linux base
-- define the minimal secure desktop
-- define child, parent, and admin account roles
-- create a central policy model
+- finalize Ubuntu-focused architecture and policy boundaries
+- define child-safe desktop baseline and app approval model
+- define parent management requirements and audit requirements
+- document installer requirements with recommended and advanced modes
 
-## Phase 2: Policy prototype
+## Phase 2: Installer and policy prototype
 
-- document app allow-list rules
-- define screen-time policies
-- define domain categories and blocked websites
-- create recovery and audit-log requirements
+- prototype interactive installer flow (design/prototype stage)
+- implement safe validation and final summary before apply
+- model parent account creation and optional child creation during setup
+- define first-pass policy schema and defaults
 
-## Phase 3: Live system prototype
+## Phase 3: System prototype
 
-- build a minimal ISO or appliance image
-- verify child login flow
-- verify blocking and policy enforcement
-- test parent dashboard scenarios
+- produce first Ubuntu-based prototype image/build process
+- validate parent and child account flows on first boot
+- validate baseline safety defaults and rollback/recovery paths
+- evaluate operational maintenance workflow
 
-## Phase 4: Hardening and maintenance
+## Phase 4: Hardening and reliability
 
-- review services and network exposure
-- add update workflow and rollback procedures
-- add metrics and logs for family administrators
+- tighten service footprint and firewall defaults
+- improve AppArmor/profile coverage where applicable
+- harden update and package source governance
+- expand audit visibility and incident recovery drills
 
-## Phase 5: Public release prep
+## Phase 5: Release readiness
 
-- document installation and support workflow
-- test multi-device deployment patterns
-- prepare release notes for safety and governance
-- move to public repository and release channels
+- finalize install and support documentation
+- complete usability and safety validation
+- prepare public release materials and governance notes
+- transition repository visibility when project is ready
 
-## Key milestones
+## Milestones
 
-- secure default user model: complete design
-- minimal child-safe desktop: prototype
-- parent management workflow: prototype
-- production-oriented appliance image: first release candidate
-
-## Long-term goals
-
-- support multiple device classes: laptop, mini-PC, school workstation
-- allow family-managed updates without advanced technical knowledge
-- provide a clear, secure default that can be deployed by non-experts
+- architecture direction: complete
+- installer design document: complete
+- Ubuntu prototype workflow: planned
+- production-quality enforcement: future work

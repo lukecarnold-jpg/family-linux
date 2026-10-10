@@ -2,97 +2,71 @@
 
 ## Mission
 
-Family Linux is a Linux-based operating system created for children to use safely and for parents to manage without requiring expert technical knowledge. The system is intentionally opinionated and conservative, modeled after OpenBSD's commitment to secure defaults and minimal risk.
+Family Linux is an Ubuntu-based operating system concept designed for children to use safely and for one parent administrator to manage without expert Linux knowledge.
 
 ## Product concept
 
-The default user experience should feel familiar and safe:
+The default experience should provide:
 
-- a child can log in to a simple desktop or kiosk session
-- all software is pre-approved and limited by policy
-- internet access is limited or configured by parental rules
-- forbidden actions are blocked, not merely warned about
-- parents can manage the system through a guided panel or administration profile
+- simple child sessions with approved apps
+- clear limits on risky actions and unsafe content paths
+- parent-managed controls for accounts, time, apps, and browsing policy
+- guided setup with safe defaults and optional advanced configuration
 
 ## User model
 
-### Child account
+### Parent account (single account in initial scope)
 
-- no interactive shell access
-- no package installation
-- no ability to change system settings
-- access only to approved apps and websites
-- limited time and session windows
+- created during installation
+- local administrator with `sudo` access
+- manages child account lifecycle and policy
+- reviews logs and performs maintenance tasks
 
-### Parent account
+### Child accounts (zero or more)
 
-- can create and manage child accounts
-- can approve or deny apps
-- can define browsing or network rules
-- can inspect access logs and configure time restrictions
+- standard non-admin Ubuntu users
+- no `sudo` rights
+- restricted from package installation and core system configuration
+- limited to approved apps and policy-controlled browsing/session rules
 
-### Administrator account
+### Future scope
 
-- reserved for trusted operators or advanced family tech setup
-- used only for updates, secure maintenance, and policy review
-- not used for everyday child access
+Support for more than one parent-level administrator may be considered later, but initial scope is one parent account.
 
-## Threat model
+## Security model direction
 
-The system should assume the following:
+Family Linux uses Ubuntu's standard security model:
 
-- child users are curious and may attempt to browse outside approved content
-- many apps are not suitable for unsupervised use
-- families need a system that avoids accidental system damage or unsafe internet exposure
-- the OS should remain simple enough to troubleshoot even without advanced Linux expertise
+- Unix users/groups and file permissions for separation
+- `sudo` for the parent administrator
+- AppArmor where applicable for confinement
+- host firewall configuration (for example via UFW/nftables policy)
+- signed packages and controlled repository sources
+- regular security updates
 
-## Design choices
-
-- Minimal software footprint
-- Locked-down network policy by default
-- Role separation between parent, child, and admin
-- Explicit allow-list for applications and websites
-- Strong audit logging for access, changes, and policy events
-- Recovery options that do not require deep system knowledge
+OpenBSD remains an influence for disciplined defaults, minimal running services, least privilege, and auditability.
 
 ## Policy goals
 
-The system should be guided by a central policy engine that defines:
+The policy model should define:
 
 - allowed applications
-- screen time and session limits
-- internet access policy
-- safe default keyboard and locale configuration
-- account lifecycle policy
-- upgrade and maintenance windows
-
-## Implementation direction
-
-The initial implementation should prefer a hardened base system such as Debian or Ubuntu with a minimal desktop, combined with OpenBSD-style hardening principles:
-
-- no unnecessary daemons
-- systemd services restricted to required features
-- UFW or nftables firewall rules with default deny on untrusted interfaces
-- secure package verification and limited repository sources
-- mandatory user separation
+- session/time limits
+- browsing/network restrictions
+- account lifecycle rules for parent and child users
+- update/maintenance windows and recovery workflow
 
 ## Success criteria
 
-A release is considered viable when a parent can:
+A milestone is successful when a parent can:
 
-- set up a child-safe system in under 30 minutes
-- assign child-safe accounts with no shell access
-- approve app access without command-line complexity
-- configure screen time and internet restrictions simply
-- recover from a misconfiguration without reinstalling the OS
+- install with recommended defaults quickly
+- create one parent account and multiple child accounts in setup
+- manage child policy without command-line complexity
+- recover safely from configuration mistakes
 
 ## Non-goals
 
-- general-purpose developer workstation
-- unlimited gaming platform
-- broad unmanaged user freedom
-- a system meant for advanced experimentation by default
-
-## Initial milestone
-
-The first milestone is a documented, testable policy and build plan. The next milestone is a minimal live system image that demonstrates the user flow and enforcement model.
+- replacing Ubuntu with a custom base distribution
+- claiming complete policy enforcement before implementation exists
+- building a general unrestricted workstation experience by default
