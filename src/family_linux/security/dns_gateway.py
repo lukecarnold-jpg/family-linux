@@ -254,6 +254,57 @@ def _svcb_address_hints(rdata: bytes) -> List[str]:
     return found
 
 
+def _svcb_ech_config_ids(rdata: bytes) -> List[int]:
+    """Config IDs of the ech parameter (key 5) in an HTTPS or SVCB record."""
+    ids: List[int] = []
+    pos = 2
+    while rdata[pos] != 0:
+        pos += 1 + rdata[pos]
+    pos += 1
+    while pos + 4 <= len(rdata):
+        key, length = struct.unpack("!HH", rdata[pos:pos + 4])
+        pos += 4
+        value = rdata[pos:pos + length]
+        pos += length
+        if key == 5:  # ech: ECHConfigList; each config starts with version(2), length(2), config_id(1)
+            cursor = 2
+            end = min(2 + struct.unpack("!H", value[:2])[0], len(value))
+            while cursor + 5 <= end:
+                config_length = struct.unpack("!H", value[cursor + 2:cursor + 4])[0]
+                ids.append(value[cursor + 4])
+                cursor += 4 + config_length
+    return ids
+
+
+def _answers(reply: bytes):
+    """Yields (rtype, ttl, rdata) for each answer in a successful reply. Malformed input stops early."""
+    if len(reply) < 12 or (reply[3] & 0x0F) != 0:
+        return
+    qdcount, ancount = struct.unpack("!HH", reply[4:8])
+    pos = 12
+    for _ in range(qdcount):
+        pos = _skip_name(reply, pos) + 4
+    for _ in range(ancount):
+        pos = _skip_name(reply, pos)
+        rtype, _, ttl, rdlength = struct.unpack("!HHIH", reply[pos:pos + 10])
+        pos += 10
+        rdata = reply[pos:pos + rdlength]
+        pos += rdlength
+        yield rtype, ttl, rdata
+
+
+def parse_answer_ech_config_ids(reply: bytes) -> List[Tuple[int, int]]:
+    """(config_id, ttl) for each ECH config advertised in an HTTPS or SVCB answer."""
+    found: List[Tuple[int, int]] = []
+    try:
+        for rtype, ttl, rdata in _answers(reply):
+            if rtype in (64, 65) and len(rdata) >= 3:
+                found.extend((config_id, ttl) for config_id in _svcb_ech_config_ids(rdata))
+    except (IndexError, struct.error, ValueError):
+        pass
+    return found
+
+
 def parse_answer_addresses(reply: bytes) -> List[Tuple[str, int]]:
     """Returns (address, ttl) for every A, AAAA, and HTTPS/SVCB address hint in a successful reply.
 
@@ -262,23 +313,12 @@ def parse_answer_addresses(reply: bytes) -> List[Tuple[str, int]]:
     """
     found: List[Tuple[str, int]] = []
     try:
-        if len(reply) < 12 or (reply[3] & 0x0F) != 0:
-            return found
-        qdcount, ancount = struct.unpack("!HH", reply[4:8])
-        pos = 12
-        for _ in range(qdcount):
-            pos = _skip_name(reply, pos) + 4
-        for _ in range(ancount):
-            pos = _skip_name(reply, pos)
-            rtype, _, ttl, rdlength = struct.unpack("!HHIH", reply[pos:pos + 10])
-            pos += 10
-            rdata = reply[pos:pos + rdlength]
-            pos += rdlength
-            if rtype == 1 and rdlength == 4:
+        for rtype, ttl, rdata in _answers(reply):
+            if rtype == 1 and len(rdata) == 4:
                 found.append((socket.inet_ntop(socket.AF_INET, rdata), ttl))
-            elif rtype == 28 and rdlength == 16:
+            elif rtype == 28 and len(rdata) == 16:
                 found.append((socket.inet_ntop(socket.AF_INET6, rdata), ttl))
-            elif rtype in (64, 65) and rdlength >= 3:  # SVCB, HTTPS
+            elif rtype in (64, 65) and len(rdata) >= 3:
                 found.extend((address, ttl) for address in _svcb_address_hints(rdata))
     except (IndexError, struct.error, OSError, ValueError):
         pass
@@ -342,6 +382,7 @@ class ChildResolver:
         allow_list: Optional[AddressAllowList] = None,
         learned_addresses=None,
         learned_names=None,
+        learned_ech=None,
     ):
         self.username = username
         self.rules = rules
@@ -354,6 +395,7 @@ class ChildResolver:
         # proxy check that a connection's address and name came from an allowed lookup.
         self.learned_addresses = learned_addresses
         self.learned_names = learned_names
+        self.learned_ech = learned_ech
 
     def answer(self, query: bytes, tcp: bool = False) -> bytes:
         try:
@@ -385,6 +427,9 @@ class ChildResolver:
                     self.learned_addresses.remember(address, ttl)
             if self.learned_names is not None:
                 self.learned_names.remember(name, ttl)
+        if self.learned_ech is not None:
+            for config_id, ech_ttl in parse_answer_ech_config_ids(reply):
+                self.learned_ech.remember(str(config_id), max(min(ech_ttl, MAX_ALLOW_SECONDS), MIN_ALLOW_SECONDS))
         return reply
 
 
@@ -450,6 +495,7 @@ def run(config: dict) -> None:
         rules = DomainRules(child.get("blocked", []), child.get("allowed", []))
         learned_addresses = tls_proxy.LearnedAddresses()
         learned_names = tls_proxy.LearnedNames()
+        learned_ech = tls_proxy.LearnedEchConfigs()
         resolver = ChildResolver(
             username=child["username"],
             rules=rules,
@@ -459,6 +505,7 @@ def run(config: dict) -> None:
             allow_list=AddressAllowList(child["uid"]) if child.get("uid") is not None else None,
             learned_addresses=learned_addresses,
             learned_names=learned_names,
+            learned_ech=learned_ech,
         )
         ctx = None
         if child.get("tls_port") is not None:
@@ -467,6 +514,7 @@ def run(config: dict) -> None:
                 rules=rules,
                 learned_addresses=learned_addresses,
                 learned_names=learned_names,
+                learned_ech=learned_ech,
                 log=log,
             )
         # Redirected IPv6 traffic lands on ::1, so every service listens on both loopbacks.

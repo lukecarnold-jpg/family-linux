@@ -350,3 +350,14 @@ def test_https_record_address_hints_are_learned():
     assert gw.parse_answer_addresses(reply) == [
         ("104.20.23.154", 300), ("172.66.147.243", 300), ("2606:4700:1000::6814:179a", 300),
     ]
+
+
+def test_ech_config_ids_are_learned_from_https_records():
+    query = make_query("example.com", qtype=65)
+    config_contents = b"\x2a" + b"\x00" * 6  # config_id 42, then filler
+    ech_config = struct.pack("!HH", 0xFE0D, len(config_contents)) + config_contents
+    ech_list = struct.pack("!H", len(ech_config)) + ech_config
+    rdata = struct.pack("!H", 1) + b"\x00" + struct.pack("!HH", 5, len(ech_list)) + ech_list
+    reply = query[:2] + struct.pack("!H", 0x8180) + struct.pack("!HHHH", 1, 1, 0, 0) + query[12:]
+    reply += b"\xc0\x0c" + struct.pack("!HHIH", 65, 1, 300, len(rdata)) + rdata
+    assert gw.parse_answer_ech_config_ids(reply) == [(42, 300)]

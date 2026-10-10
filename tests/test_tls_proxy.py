@@ -21,7 +21,9 @@ def client_hello(sni=None, ech=False, extra_extensions=b"") -> bytes:
         ext_data = struct.pack("!H", len(server_name_list)) + server_name_list
         extensions += struct.pack("!HH", 0x0000, len(ext_data)) + ext_data
     if ech:
-        extensions += struct.pack("!HH", 0xFE0D, 4) + b"\x00\x01\x02\x03"
+        # outer ECH: type 0, kdf 0x0001, aead 0x0001, config_id 0x07, enc (empty), payload (empty)
+        ech_data = b"\x00\x00\x01\x00\x01\x07" + b"\x00\x00" + b"\x00\x00"
+        extensions += struct.pack("!HH", 0xFE0D, len(ech_data)) + ech_data
     extensions += extra_extensions
     body = b"\x03\x03" + b"\x11" * 32 + b"\x00" + struct.pack("!H", 2) + b"\x13\x01"
     body += b"\x01\x00"  # one compression method: null
@@ -119,9 +121,12 @@ def test_unlearned_address_is_refused():
     assert not allowed and "address 9.9.9.9 not returned" in reason
 
 
-def test_encrypted_server_name_is_refused():
+def test_real_ech_with_an_advertised_config_is_refused():
     addr, nm = stores(["93.184.216.34"], ["example.com"])
-    allowed, reason = tp.decide(DomainRules([], []), addr, nm, "93.184.216.34", "example.com", True)
+    learned_ech = tp.LearnedEchConfigs()
+    learned_ech.remember("7", 300)
+    allowed, reason = tp.decide(DomainRules([], []), addr, nm, "93.184.216.34", "example.com", True,
+                                ech_config_id=7, learned_ech=learned_ech)
     assert not allowed and "encrypted" in reason
 
 
@@ -254,3 +259,18 @@ def test_ipv6_learned_addresses_and_decisions_work():
     addr, nm = stores(["2606:4700::6810:1"], ["example.com"])
     allowed, reason = tp.decide(DomainRules([], []), addr, nm, "2606:4700:0::6810:1", "example.com", False)
     assert allowed, reason
+
+
+def test_grease_ech_is_not_refused_on_its_own():
+    # Chrome sends a random (GREASE) ECH extension on every connection. Its outer name is the real one.
+    addr, nm = stores(["93.184.216.34"], ["example.com"])
+    learned_ech = tp.LearnedEchConfigs()
+    learned_ech.remember("7", 300)
+    allowed, reason = tp.decide(DomainRules([], []), addr, nm, "93.184.216.34", "example.com", True,
+                                ech_config_id=9, learned_ech=learned_ech)
+    assert allowed, reason
+
+
+def test_ech_config_id_is_read_from_the_outer_extension():
+    info = tp.parse_client_hello(client_hello(sni="example.com", ech=True))
+    assert info.ech is True and info.ech_config_id == 7

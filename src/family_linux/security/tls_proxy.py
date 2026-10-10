@@ -76,6 +76,16 @@ class LearnedAddresses(_Store):
         return self.remembered(str(ipaddress.ip_address(address)))
 
 
+class LearnedEchConfigs(_Store):
+    """ECH config IDs advertised by allowed lookups. A hello that uses one of these is real ECH."""
+
+    def remember(self, config_id: str, seconds: float) -> None:  # type: ignore[override]
+        super().remember(config_id, seconds)
+
+    def used(self, config_id: int) -> bool:
+        return self.remembered(str(config_id))
+
+
 class LearnedNames(_Store):
     """Names this child looked up through the gateway and was allowed to resolve."""
 
@@ -90,6 +100,9 @@ class LearnedNames(_Store):
 class ClientHelloInfo:
     sni: Optional[str]
     ech: bool
+    # Config ID of an outer ECH extension (None when there is none). Real ECH uses a config
+    # advertised in DNS; GREASE uses a random one, and its outer name is the real name.
+    ech_config_id: Optional[int] = None
 
 
 def parse_client_hello(data: bytes) -> Optional[ClientHelloInfo]:
@@ -122,6 +135,7 @@ def parse_client_hello(data: bytes) -> Optional[ClientHelloInfo]:
         end = min(pos + extensions_length, len(hello))
         sni: Optional[str] = None
         ech = False
+        ech_config_id: Optional[int] = None
         while pos + 4 <= end:
             ext_type, ext_length = struct.unpack("!HH", hello[pos:pos + 4])
             pos += 4
@@ -133,7 +147,9 @@ def parse_client_hello(data: bytes) -> Optional[ClientHelloInfo]:
                 sni = _parse_server_name(ext_data)
             elif ext_type == EXT_ENCRYPTED_CLIENT_HELLO:
                 ech = True
-        return ClientHelloInfo(sni=sni, ech=ech)
+                if len(ext_data) >= 6 and ext_data[0] == 0:  # outer: kdf(2), aead(2), config_id(1)
+                    ech_config_id = ext_data[5]
+        return ClientHelloInfo(sni=sni, ech=ech, ech_config_id=ech_config_id)
     except (IndexError, struct.error) as exc:
         raise ValueError("malformed ClientHello") from exc
 
@@ -193,11 +209,14 @@ def decide(
     address: str,
     name: Optional[str],
     ech: bool,
+    ech_config_id: Optional[int] = None,
+    learned_ech: Optional["LearnedEchConfigs"] = None,
 ) -> Tuple[bool, str]:
     """Returns (allowed, reason) for one connection."""
     if not learned_addresses.allowed(address):
         return False, f"address {address} not returned by an allowed lookup"
-    if ech:
+    if ech and learned_ech is not None and ech_config_id is not None and learned_ech.used(ech_config_id):
+        # Real ECH with a config from an allowed lookup: the real name is hidden, so refuse.
         return False, "encrypted server name not permitted"
     if not name:
         return False, "no server name"
@@ -234,6 +253,7 @@ class ProxyContext:
     learned_addresses: LearnedAddresses
     learned_names: LearnedNames
     log: RequestLog
+    learned_ech: Optional[LearnedEchConfigs] = None
     # Opens the upstream connection. Injected by tests; production uses the default.
     connect: Callable[[Tuple[str, int], float], socket.socket] = socket.create_connection
 
@@ -255,6 +275,7 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
         buffered = b""
         name: Optional[str] = None
         ech = False
+        ech_config_id: Optional[int] = None
         try:
             while True:
                 chunk = client.recv(4096)
@@ -265,7 +286,7 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
                 if port == 443:
                     info = parse_client_hello(buffered)
                     if info is not None:
-                        name, ech = info.sni, info.ech
+                        name, ech, ech_config_id = info.sni, info.ech, info.ech_config_id
                         break
                 else:
                     host = parse_http_host(buffered)
@@ -279,7 +300,10 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
             _note(ctx, f"could not read hello to {address}:{port}: {exc}")
             return
 
-        allowed, reason = decide(ctx.rules, ctx.learned_addresses, ctx.learned_names, address, name, ech)
+        allowed, reason = decide(
+            ctx.rules, ctx.learned_addresses, ctx.learned_names, address, name, ech,
+            ech_config_id=ech_config_id, learned_ech=ctx.learned_ech,
+        )
         _note(ctx, f"{address}:{port} name={name!r} ech={ech} -> {'allow' if allowed else 'refuse'} ({reason})")
         if not allowed:
             if name:
