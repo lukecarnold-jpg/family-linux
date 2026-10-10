@@ -22,6 +22,13 @@ CHROMIUM_POLICY_PATH = Path("/etc/chromium/policies/managed/family-policy.json")
 CHROME_POLICY_PATH = Path("/etc/opt/chrome/policies/managed/family-policy.json")
 
 
+def _firefox_match_pattern(domain: str) -> str:
+    """Builds a Firefox match pattern. "*.example" matches every host under example, not a host named example."""
+    if domain.startswith("*."):
+        return f"*://*.{domain[2:]}/*"
+    return f"*://{domain}/*"
+
+
 class BrowserPolicyManager:
     """Configures system-wide browser security policies."""
 
@@ -30,7 +37,7 @@ class BrowserPolicyManager:
 
     def generate_firefox_policy(self, web_filter: WebFilterPolicy) -> Dict[str, Any]:
         """Generates Firefox distribution/policies.json dictionary."""
-        blocked_urls = [f"*://{d}/*" if not d.startswith("*") else f"*://{d.lstrip('*.')}/*" for d in web_filter.blocked_domains]
+        blocked_urls = [_firefox_match_pattern(d) for d in web_filter.blocked_domains]
 
         policies: Dict[str, Any] = {
             "DisablePrivateBrowsing": web_filter.block_incognito,
@@ -50,7 +57,7 @@ class BrowserPolicyManager:
         if blocked_urls:
             policies["WebsiteFilter"] = {
                 "Block": blocked_urls,
-                "Exceptions": [f"*://{d}/*" for d in web_filter.allowed_domains],
+                "Exceptions": [_firefox_match_pattern(d) for d in web_filter.allowed_domains],
             }
 
         return {"policies": policies}

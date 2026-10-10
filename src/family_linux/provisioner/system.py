@@ -113,8 +113,12 @@ class SystemProvisioner:
         all_blocked_domains: set[str] = set()
         for child in policy.children:
             all_blocked_domains.update(child.web_filter.blocked_domains)
-        self.dns_filter.update_hosts_blocklist(list(all_blocked_domains))
+        skipped_wildcards = self.dns_filter.update_hosts_blocklist(list(all_blocked_domains))
         results["actions"].append(f"Domain blocklist updated ({len(all_blocked_domains)} domains)")
+        if skipped_wildcards:
+            results["warnings"].append(
+                f"Wildcard block rules cannot be enforced by /etc/hosts and were skipped: {', '.join(sorted(skipped_wildcards))}"
+            )
 
         # 5. Apply Managed Browser policies
         # Use strictest child policy or default

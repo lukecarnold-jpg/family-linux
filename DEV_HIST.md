@@ -169,12 +169,34 @@ The profile was named but never attached, so it could not confine any process (o
 - Fixed the profile: allows `/etc`, `/usr/share`, and standard binary paths. The explicit denies (shadow, sudoers, root, package managers, family policy) still apply. The VM job then passed both controls: `/etc/hostname` readable, `/etc/shadow` denied under `family-linux-child`.
 - Known trade-off: confined processes can still execute other binaries, including shells. A launched app that spawns a shell escapes the file restrictions. Closing this needs the child session work below.
 
+## Session 5: child session lockdown and web filtering
+
+Item 1 (child session lockdown):
+
+- Child AppArmor profile now denies starting shells (`sh`, `bash`, `dash`, `zsh`, `fish`, and others) and terminal emulators. Exec is checked on each program a confined process starts, so `env`, Python, or `os.system` cannot reach a shell.
+- Terminal shortcut (Ctrl+Alt+T) and the Alt+F2 command line are locked with system-wide dconf settings written to `/etc/dconf/db/local.d`. The locks apply to every user, including the parent.
+- Blocked-program list adds terminal emulators and GNOME desktop IDs (`org.gnome.Terminal`, `org.gnome.Console`, `kgx`, and others).
+- Tested on the GitHub Ubuntu VM: `/bin/sh` and `bash` cannot be started from inside the profile, `/usr/bin/env` (an allowed binary) still runs, and the lockdown files are written.
+- Found while testing: `aa-exec -p PROFILE -- SHELL` does not test the deny rule. `aa-exec` switches profile on exec, but the exec is checked against the caller, which is unconfined root. The meaningful test starts the shell from inside the profile.
+- Not covered: a terminal started outside the profile (for example from a file manager's "open terminal here") and any interpreter that can run code. The dconf locks and the desktop-entry hiding only cover the entry points listed above. A child's login shell is `nologin`, which blocks a text console login.
+
+Web filtering (answer to the parent's question):
+
+- Parents can set blocked and allowed domains per child, from the CLI or the dashboard. Blocking is enforced in three places: the browser (Firefox and Chromium managed policies), the hosts file, and the DNS provider chosen in the policy (CleanBrowsing Family by default).
+- Found and fixed: the default wildcard rules (`*.adult`, `*.porn`, `*.gambling`) did not block anything. The hosts file got `0.0.0.0 adult` (a host named "adult") and Firefox got `*://adult/*`. Firefox now gets `*://*.adult/*`, and the hosts layer skips wildcards and reports them as warnings.
+- Not fixed, needs a decision:
+  - **Per-child rules are not per-child.** Browser policy and the DNS provider come from the first child only. Browser policies are system-wide, so they apply to every user. Per-child browser rules cannot be expressed this way. The blocklist is the union across children, so one child's block applies to all.
+  - **Allowlists do not override DNS blocks.** An allowed site that the DNS family filter blocks stays blocked. The allowlist only affects browser URL exceptions.
+  - **Chromium wildcard syntax is unverified.** The Chromium URL blocklist still gets `http://*.adult`. I did not change it because I could not check Chromium's wildcard format here.
+  - **Snap builds.** Ubuntu's Firefox and Chromium are snaps, so the managed policy files may not apply (see open item on browser policy).
+
 ## Open items, in priority order
 
-1. Child session lockdown: stop confined apps from reaching a shell (see Session 4 trade-off), and hide terminal access at the desktop level.
-2. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
-3. Extend the VM job to launch each approved app under the profile (only `/bin/true` and `cat` have been exercised).
-4. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
-5. Add a pre-apply plan (dry-run diff) and consider rollback.
-6. Packaging: install the console scripts and systemd units.
-7. Scrub or recreate backups that hold old plaintext passwords.
+1. Web filtering design: decide how per-child rules work when browser and DNS policy are machine-wide (see Session 5).
+2. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
+3. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
+4. Extend the VM job to launch each approved app under the profile (only `/bin/true`, `env`, and `cat` have been exercised).
+5. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
+6. Add a pre-apply plan (dry-run diff) and consider rollback.
+7. Packaging: install the console scripts and systemd units.
+8. Scrub or recreate backups that hold old plaintext passwords.
