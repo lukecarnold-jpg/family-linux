@@ -327,11 +327,32 @@ Known limits:
 - **ECH config ID collisions.** Config IDs are one byte, so a GREASE hello can collide with a learned ID and be refused (about 1 in 256 per learned config).
 - **Real ECH is refused only when its config was learned through the gateway.** A config obtained another way is judged by its outer name, which is the public name, not the real one.
 
+## Session 12: connection reuse and the cloudflare.com failure
+
+Connection reuse (measured in Chromium as the child, same browser session):
+- An allowed Google page (`www.google.com`) loaded, holding open connections to Google front ends.
+- A background request from that page to blocked `youtube.com` failed.
+- Navigating to `youtube.com` in the same session failed.
+- The gateway log shows why: the browser looked up `youtube.com` itself, got `0.0.0.0`, and connected to that, which the proxy refused. It did not reuse the Google connection.
+- Control: the parent, without the gateway, loaded all three.
+
+`cloudflare.com`:
+- The parent loads it (control), so the earlier child failures involved the gateway, not the site.
+- Found and fixed a real defect while investigating: the 5-second connect timeout stayed on the upstream socket, so any relayed connection idle for 5 seconds was closed. HTTP/2 keeps connections open between requests. A regression test fails without the fix.
+- The failure did not reproduce afterwards: 6 of 6 loads as the child and 6 of 6 as the parent in one run. One failing run happened with the timeout fix already in place, so the fix is not proven to be the cure. The cause of the earlier failures is not known.
+
+Decision on option 2 (Session 9 rule: build it if the measured weakness is significant):
+- No significant weakness was measured. A blocked site stayed blocked in a real browser, including through an open connection to the same front ends.
+- Option 2 was not started.
+
+Still not measured:
+- A real ECH connection (no site in the runs used one).
+- Long sessions (HTTP/2 connections held for minutes), beyond the regression test.
+
 ## Open items, in priority order
 
-1. Explain why `cloudflare.com` does not load for the child, although its connections are allowed (Session 11).
-2. Measure connection reuse in the browser: two hosts on one address, the blocked one loaded after the allowed one.
-3. Measure a real ECH site once one is found, to see what the real-ECH refusal costs.
+1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
+2. Measure a real ECH site once one is found, to see what the real-ECH refusal costs.
 3. Dashboard page for web requests (API exists).
 4. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
 5. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
