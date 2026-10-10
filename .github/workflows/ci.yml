@@ -248,7 +248,7 @@ jobs:
           sudo install -d -o cikid -g family-children /tmp/cikid-browser
           chrome() {
             sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome --headless=new --no-sandbox \
-              --disable-gpu --disable-dev-shm-usage --disable-breakpad --no-first-run --user-data-dir=/tmp/cikid-browser/profile \
+              --disable-gpu --disable-dev-shm-usage --disable-breakpad --disable-crash-reporter --no-first-run --user-data-dir=/tmp/cikid-browser/profile \
               --dump-dom "$1" 2>/dev/null || true
           }
           echo "--- child resolution for example.com:"
@@ -258,7 +258,7 @@ jobs:
           sudo -u cikid curl -6 -sS --max-time 20 -o /dev/null -w "v6 http=%{http_code}\n" https://example.com || true
           echo "--- child chrome stderr (first lines):"
           sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome --headless=new --no-sandbox \
-            --disable-gpu --disable-dev-shm-usage --disable-breakpad --no-first-run --user-data-dir=/tmp/cikid-browser/profile \
+            --disable-gpu --disable-dev-shm-usage --disable-breakpad --disable-crash-reporter --no-first-run --user-data-dir=/tmp/cikid-browser/profile \
             --dump-dom https://example.com 2>&1 >/dev/null | head -20 || true
           example=$(chrome https://example.com)
           if echo "$example" | grep -q "Example Domain"; then

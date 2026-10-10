@@ -87,9 +87,14 @@ def render_nft(child_uids: List[Tuple[int, int, int]]) -> str:
         "    type nat hook output priority -100; policy accept;",
     ]
     for uid, port, tls_port in child_uids:
-        lines.append(f"    meta skuid {uid} udp dport 53 redirect to :{port}")
-        lines.append(f"    meta skuid {uid} tcp dport 53 redirect to :{port}")
-        lines.append(f"    meta skuid {uid} tcp dport {{ 80, 443 }} redirect to :{tls_port}")
+        # IPv4 redirects to 127.0.0.1. IPv6 names ::1 explicitly: the plain redirect target for
+        # IPv6 did not reach the listeners on the VM.
+        lines.append(f"    meta skuid {uid} meta nfproto ipv4 udp dport 53 redirect to :{port}")
+        lines.append(f"    meta skuid {uid} meta nfproto ipv4 tcp dport 53 redirect to :{port}")
+        lines.append(f"    meta skuid {uid} meta nfproto ipv6 udp dport 53 dnat ip6 to [::1]:{port}")
+        lines.append(f"    meta skuid {uid} meta nfproto ipv6 tcp dport 53 dnat ip6 to [::1]:{port}")
+        lines.append(f"    meta skuid {uid} meta nfproto ipv4 tcp dport {{ 80, 443 }} redirect to :{tls_port}")
+        lines.append(f"    meta skuid {uid} meta nfproto ipv6 tcp dport {{ 80, 443 }} dnat ip6 to [::1]:{tls_port}")
     lines += [
         "  }",
         "  chain output_filter {",

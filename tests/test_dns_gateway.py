@@ -190,12 +190,13 @@ def test_each_child_gets_a_distinct_port_and_their_own_rules():
 
 def test_nft_rules_redirect_dns_and_drop_dot_per_uid():
     rules = render_nft([(1002, 5301, 5401), (1003, 5302, 5402)])
-    assert "meta skuid 1002 udp dport 53 redirect to :5301" in rules
-    assert "meta skuid 1002 tcp dport 53 redirect to :5301" in rules
+    assert "meta skuid 1002 meta nfproto ipv4 udp dport 53 redirect to :5301" in rules
+    assert "meta skuid 1002 meta nfproto ipv4 tcp dport 53 redirect to :5301" in rules
+    assert "meta skuid 1002 meta nfproto ipv6 udp dport 53 dnat ip6 to [::1]:5301" in rules
     assert "meta skuid 1003 tcp dport 53 redirect to :5302" in rules
     assert "meta skuid 1002 tcp dport 853 drop" in rules
-    assert "meta skuid 1002 tcp dport { 80, 443 } redirect to :5401" in rules
-    assert "meta skuid 1003 tcp dport { 80, 443 } redirect to :5402" in rules
+    assert "meta skuid 1002 meta nfproto ipv4 tcp dport { 80, 443 } redirect to :5401" in rules
+    assert "meta skuid 1003 meta nfproto ipv6 tcp dport { 80, 443 } dnat ip6 to [::1]:5402" in rules
     assert "meta skuid 1002 udp dport 443 drop" in rules
     assert "meta skuid 1003 udp dport 853 drop" in rules
     assert "add table inet family_linux" in rules and "delete table inet family_linux" in rules
