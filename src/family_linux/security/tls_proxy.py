@@ -25,6 +25,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 import struct
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -237,12 +238,18 @@ class ProxyContext:
     connect: Callable[[Tuple[str, int], float], socket.socket] = socket.create_connection
 
 
+def _note(ctx: ProxyContext, message: str) -> None:
+    """Writes a connection-level event to the service log (journal), for diagnosis."""
+    print(f"[Family Linux] tls {ctx.username}: {message}", file=sys.stderr, flush=True)
+
+
 def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
     """Reads the first bytes, decides, then relays or closes."""
     with client:
         try:
             address, port = original_destination(client)
-        except OSError:
+        except OSError as exc:
+            _note(ctx, f"no original destination: {exc}")
             return
         client.settimeout(HELLO_TIMEOUT)
         buffered = b""
@@ -252,6 +259,7 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
             while True:
                 chunk = client.recv(4096)
                 if not chunk:
+                    _note(ctx, f"client closed before a complete hello to {address}:{port}")
                     return
                 buffered += chunk
                 if port == 443:
@@ -265,11 +273,14 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
                         name = host or None
                         break
                 if len(buffered) > HELLO_LIMIT:
+                    _note(ctx, f"hello larger than {HELLO_LIMIT} bytes to {address}:{port}")
                     return
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            _note(ctx, f"could not read hello to {address}:{port}: {exc}")
             return
 
         allowed, reason = decide(ctx.rules, ctx.learned_addresses, ctx.learned_names, address, name, ech)
+        _note(ctx, f"{address}:{port} name={name!r} ech={ech} -> {'allow' if allowed else 'refuse'} ({reason})")
         if not allowed:
             if name:
                 ctx.log.record(ctx.username, name, reason)
@@ -277,7 +288,8 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
 
         try:
             upstream = ctx.connect((address, port), TCP_TIMEOUT)
-        except OSError:
+        except OSError as exc:
+            _note(ctx, f"upstream connect to {address}:{port} failed: {exc}")
             return
         with upstream:
             upstream.sendall(buffered)
