@@ -274,3 +274,34 @@ def test_grease_ech_is_not_refused_on_its_own():
 def test_ech_config_id_is_read_from_the_outer_extension():
     info = tp.parse_client_hello(client_hello(sni="example.com", ech=True))
     assert info.ech is True and info.ech_config_id == 7
+
+
+def test_relay_survives_an_idle_pause_longer_than_the_connect_timeout(tmp_path, monkeypatch):
+    """HTTP/2 keeps connections open between requests; the relay must not time out while idle."""
+    import time as _time
+
+    monkeypatch.setattr(tp, "TCP_TIMEOUT", 0.3)
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    origin = listener.getsockname()
+
+    def slow_origin():
+        conn, _ = listener.accept()
+        with conn:
+            conn.recv(65536)
+            _time.sleep(1.0)  # longer than the connect timeout
+            conn.sendall(b"LATE-REPLY")
+        listener.close()
+
+    threading.Thread(target=slow_origin, daemon=True).start()
+    proxy_end, client_end = _proxy_pair(monkeypatch, ("127.0.0.1", 443))
+    ctx = _ctx(tmp_path, ["127.0.0.1"], ["example.com"], origin=origin)
+
+    worker = threading.Thread(target=tp.handle_connection, args=(proxy_end, ctx), daemon=True)
+    worker.start()
+    client_end.sendall(client_hello(sni="example.com"))
+    client_end.settimeout(5)
+    assert client_end.recv(64) == b"LATE-REPLY"
+    client_end.close()
+    worker.join(timeout=5)

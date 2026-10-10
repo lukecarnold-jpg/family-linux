@@ -316,6 +316,9 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
             _note(ctx, f"upstream connect to {address}:{port} failed: {exc}")
             return
         with upstream:
+            # The connect timeout must not outlive the connect: a relayed connection can sit
+            # idle between requests (HTTP/2 keeps connections open), and a timeout would close it.
+            upstream.settimeout(None)
             upstream.sendall(buffered)
             client.settimeout(None)
             outbound = threading.Thread(target=_relay, args=(client, upstream), daemon=True)
