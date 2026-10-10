@@ -287,7 +287,8 @@ def test_allowed_answers_feed_the_child_allow_list_but_blocked_answers_do_not(tm
 def test_nft_rules_drop_child_traffic_except_allowed_addresses():
     rules = render_nft([(1002, 5301)])
     assert "set allow4_1002 { type ipv4_addr; flags timeout; }" in rules
-    assert 'meta skuid 1002 oif "lo" accept' in rules
+    assert "meta skuid 1002 ip daddr 127.0.0.0/8 accept" in rules
+    assert "meta skuid 1002 ip6 daddr ::1 accept" in rules
     assert "meta skuid 1002 ip daddr @allow4_1002 accept" in rules
     assert "meta skuid 1002 ip6 daddr @allow6_1002 accept" in rules
     # the catch-all drop must come after every accept for that UID

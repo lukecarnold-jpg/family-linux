@@ -90,7 +90,10 @@ def render_nft(child_uids: List[Tuple[int, int]]) -> str:
         lines += [
             f"    meta skuid {uid} tcp dport 853 drop",
             f"    meta skuid {uid} udp dport 853 drop",
-            f'    meta skuid {uid} oif "lo" accept',
+            # Match the destination, not the output interface: a redirected packet's
+            # interface is chosen before the redirect, so oif "lo" does not match it.
+            f"    meta skuid {uid} ip daddr 127.0.0.0/8 accept",
+            f"    meta skuid {uid} ip6 daddr ::1 accept",
             f"    meta skuid {uid} ct state established,related accept",
             f"    meta skuid {uid} ip daddr @allow4_{uid} accept",
             f"    meta skuid {uid} ip6 daddr @allow6_{uid} accept",
