@@ -219,9 +219,27 @@ Known limits (not closed by this design):
 - **Gateway availability.** If the gateway is down, the child's DNS fails closed (queries time out) rather than falling back. The restart policy is `on-failure`.
 - **No dashboard page** for requests yet. The API exists.
 
+## Session 7: closing the direct-IP bypass
+
+Design: a child may only connect to addresses that the gateway has just returned in a lookup the parent allowed.
+
+- **Address parsing** (`dns_gateway.parse_answer_addresses`): reads A and AAAA records with their TTLs from successful replies, following compressed names. Malformed replies yield what was read before the error and never stop the resolver.
+- **Allow sets** (`web_gateway.render_nft`): per child, an IPv4 and an IPv6 nftables set with timeouts. The output filter drops that child's outbound traffic unless it is to loopback, part of an established connection, or in one of the sets. DoT (port 853) is dropped first.
+- **Learning** (`dns_gateway.AddressAllowList`): after an allowed or default answer, each address is deleted and re-added with the record's TTL, clamped to 60 seconds to 1 hour. Blocked answers add nothing. The gateway config carries each child's UID.
+- **Loopback match**: the rules match the destination (`127.0.0.0/8`, `::1`), not the output interface. A redirected packet's interface is chosen before the redirect, so `oif "lo"` missed it and child DNS was dropped with `EPERM`. Found on the VM.
+
+Verified on the GitHub Ubuntu VM:
+- The parent connects directly to `9.9.9.9:443` (control).
+- The child cannot connect to `9.9.9.9:443`, an address no lookup returned.
+- The child looks up `example.com`, gets an address, and can connect to it.
+- The earlier checks still pass: blocked names return `0.0.0.0`, a query to `8.8.8.8` is answered by the gateway, DNS over TLS is dropped, and blocked lookups become requests that approval unblocks.
+
+Known limit, not closed:
+- **Shared addresses.** A CDN address often serves many sites. An allowed lookup therefore allows connections to any site on that address, and a child who sends a blocked site's name in TLS SNI can reach it there. Closing this needs TLS SNI inspection, which is a separate design. Until then, IP-level allowance is a strong control against casual bypass, not a complete one for CDN-hosted sites.
+
 ## Open items, in priority order
 
-1. Close direct-IP bypass for children (see Session 6, known limits).
+1. SNI-level control for shared CDN addresses (see Session 7, known limit).
 2. Dashboard page for web requests (API exists).
 3. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
 4. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
