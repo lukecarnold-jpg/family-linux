@@ -251,6 +251,15 @@ jobs:
               --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cikid-browser/profile \
               --dump-dom "$1" 2>/dev/null || true
           }
+          echo "--- child resolution for example.com:"
+          sudo -u cikid getent ahosts example.com || true
+          echo "--- child curl over IPv4 and IPv6:"
+          sudo -u cikid curl -4 -sS --max-time 20 -o /dev/null -w "v4 http=%{http_code}\n" https://example.com || true
+          sudo -u cikid curl -6 -sS --max-time 20 -o /dev/null -w "v6 http=%{http_code}\n" https://example.com || true
+          echo "--- child chrome stderr (first lines):"
+          sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome --headless=new --no-sandbox \
+            --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cikid-browser/profile \
+            --dump-dom https://example.com 2>&1 >/dev/null | head -20 || true
           example=$(chrome https://example.com)
           if echo "$example" | grep -q "Example Domain"; then
             echo "RESULT child loads an allowed site: yes"
