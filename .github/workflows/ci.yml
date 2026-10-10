@@ -266,7 +266,7 @@ jobs:
                       page.goto(url, timeout=30000)
                       print(f"RESULT {key}: loaded title={page.title()!r}")
                   except Exception as exc:
-                      print(f"RESULT {key}: not loaded ({type(exc).__name__})")
+                      print(f"RESULT {key}: not loaded ({type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''})")
               browser.close()
           PY
           chmod 644 /tmp/browser_check.py
