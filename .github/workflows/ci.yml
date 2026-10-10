@@ -239,3 +239,33 @@ jobs:
           approved=$(sudo -u cikid getent ahostsv4 omegle.com | awk 'NR==1{print $1}')
           echo "child lookup omegle.com after approval -> ${approved:-none}"
           test -n "$approved" && test "$approved" != "0.0.0.0"
+
+      - name: Measure real browser behaviour for a child (headless Chrome as the child account)
+        run: |
+          command -v google-chrome
+          sudo "$(which python)" -m family_linux.cli.family_ctl web block youtube.com --child cikid
+          sleep 2
+          sudo install -d -o cikid -g family-children /tmp/cikid-browser
+          chrome() {
+            sudo -u cikid env HOME=/tmp/cikid-browser timeout 90 google-chrome --headless=new --no-sandbox \
+              --disable-gpu --disable-dev-shm-usage --user-data-dir=/tmp/cikid-browser/profile \
+              --dump-dom "$1" 2>/dev/null || true
+          }
+          example=$(chrome https://example.com)
+          if echo "$example" | grep -q "Example Domain"; then
+            echo "RESULT child loads an allowed site: yes"
+          else
+            echo "RESULT child loads an allowed site: NO"; exit 1
+          fi
+          yt=$(chrome https://www.youtube.com)
+          if echo "$yt" | grep -q "<title>YouTube"; then
+            echo "RESULT child loads a blocked site (youtube.com): YES (weakness)"; exit 1
+          else
+            echo "RESULT child loads a blocked site (youtube.com): no"
+          fi
+          cf=$(chrome https://www.cloudflare.com)
+          if echo "$cf" | grep -qi "<title"; then
+            echo "RESULT child loads an ECH-capable site (cloudflare.com): yes"
+          else
+            echo "RESULT child loads an ECH-capable site (cloudflare.com): no (ECH refused)"
+          fi
