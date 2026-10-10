@@ -41,7 +41,7 @@ jobs:
 
       - name: Run Family Linux CLI & bootstrap smoke tests
         env:
-          PARENT_PASS: "ci-only-Pass1"
+          PARENT_PASS: "ci-only-Passw0rd!"
         run: |
           chmod +x scripts/bootstrap-prototype.sh scripts/build-autoinstall-iso.sh
           ./scripts/bootstrap-prototype.sh --help
@@ -117,7 +117,7 @@ jobs:
             --non-interactive \
             --parent-user ciparent \
             --parent-name "CI Parent" \
-            --parent-pass "CiParentPass1" \
+            --parent-pass "CiParentPass-2026!" \
             --child "cikid:CI Kid:young_child:CiKidPass1"
           id cikid
           id ciparent
