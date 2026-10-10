@@ -36,7 +36,8 @@ TLS_CONTENT_HANDSHAKE = 0x16
 TLS_HANDSHAKE_CLIENT_HELLO = 0x01
 EXT_SERVER_NAME = 0x0000
 EXT_ENCRYPTED_CLIENT_HELLO = 0xFE0D
-SO_ORIGINAL_DST = 80
+SO_ORIGINAL_DST = 80  # IPv4: SOL_IP level
+IP6T_SO_ORIGINAL_DST = 80  # IPv6: IPPROTO_IPV6 level
 HELLO_LIMIT = 16384
 HELLO_TIMEOUT = 5.0
 
@@ -165,11 +166,23 @@ def parse_http_host(data: bytes) -> Optional[str]:
     return ""
 
 
-def original_destination(sock: socket.socket) -> Tuple[str, int]:
-    """The address a redirected connection was originally sent to (Linux netfilter)."""
-    raw = sock.getsockopt(socket.SOL_IP, SO_ORIGINAL_DST, 16)
+def parse_original_dst_v4(raw: bytes) -> Tuple[str, int]:
+    """Parses a sockaddr_in returned by SO_ORIGINAL_DST."""
     port = struct.unpack("!H", raw[2:4])[0]
     return socket.inet_ntoa(raw[4:8]), port
+
+
+def parse_original_dst_v6(raw: bytes) -> Tuple[str, int]:
+    """Parses a sockaddr_in6 returned by IP6T_SO_ORIGINAL_DST."""
+    port = struct.unpack("!H", raw[2:4])[0]
+    return socket.inet_ntop(socket.AF_INET6, raw[8:24]), port
+
+
+def original_destination(sock: socket.socket) -> Tuple[str, int]:
+    """The address a redirected connection was originally sent to (Linux netfilter)."""
+    if sock.family == socket.AF_INET6:
+        return parse_original_dst_v6(sock.getsockopt(socket.IPPROTO_IPV6, IP6T_SO_ORIGINAL_DST, 28))
+    return parse_original_dst_v4(sock.getsockopt(socket.SOL_IP, SO_ORIGINAL_DST, 16))
 
 
 def decide(
@@ -275,9 +288,11 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
             outbound.join(timeout=TCP_TIMEOUT)
 
 
-def serve(host: str, port: int, ctx: ProxyContext) -> None:
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+def serve(host: str, port: int, ctx: ProxyContext, family: int = socket.AF_INET) -> None:
+    listener = socket.socket(family, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if family == socket.AF_INET6:
+        listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
     listener.bind((host, port))
     listener.listen(64)
     while True:

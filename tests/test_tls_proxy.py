@@ -240,3 +240,17 @@ def test_http_host_is_checked_on_port_80(tmp_path, monkeypatch):
     worker.join(timeout=3)
     assert received == []
     client_end.close()
+
+
+def test_original_destination_parsing_v4_and_v6():
+    import socket as _s
+    v4 = bytes([2, 0]) + (443).to_bytes(2, "big") + _s.inet_aton("93.184.216.34") + b"\0" * 8
+    assert tp.parse_original_dst_v4(v4) == ("93.184.216.34", 443)
+    v6 = bytes([10, 0]) + (443).to_bytes(2, "big") + b"\0" * 4 + _s.inet_pton(_s.AF_INET6, "2606:4700::6810:1") + b"\0" * 4
+    assert tp.parse_original_dst_v6(v6) == ("2606:4700::6810:1", 443)
+
+
+def test_ipv6_learned_addresses_and_decisions_work():
+    addr, nm = stores(["2606:4700::6810:1"], ["example.com"])
+    allowed, reason = tp.decide(DomainRules([], []), addr, nm, "2606:4700:0::6810:1", "example.com", False)
+    assert allowed, reason

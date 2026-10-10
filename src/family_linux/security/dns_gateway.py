@@ -363,9 +363,11 @@ class ChildResolver:
         return reply
 
 
-def _serve_udp(host: str, port: int, resolver: ChildResolver) -> None:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+def _serve_udp(host: str, port: int, resolver: ChildResolver, family: int = socket.AF_INET) -> None:
+    sock = socket.socket(family, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if family == socket.AF_INET6:
+        sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
     sock.bind((host, port))
 
     def handle(query: bytes, addr) -> None:
@@ -376,9 +378,11 @@ def _serve_udp(host: str, port: int, resolver: ChildResolver) -> None:
         threading.Thread(target=handle, args=(query, addr), daemon=True).start()
 
 
-def _serve_tcp(host: str, port: int, resolver: ChildResolver) -> None:
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+def _serve_tcp(host: str, port: int, resolver: ChildResolver, family: int = socket.AF_INET) -> None:
+    listener = socket.socket(family, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if family == socket.AF_INET6:
+        listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
     listener.bind((host, port))
     listener.listen(16)
 
@@ -396,6 +400,14 @@ def _serve_tcp(host: str, port: int, resolver: ChildResolver) -> None:
     while True:
         conn, _ = listener.accept()
         threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+
+def _listen(target: Callable, address: str, port: int, args: tuple, family: int) -> None:
+    """Runs one listener. An unavailable address (for example IPv6 disabled) is reported, not fatal."""
+    try:
+        target(address, port, *args, family=family)
+    except OSError as exc:
+        print(f"[Family Linux] listener {address}:{port} not started: {exc}", file=sys.stderr, flush=True)
 
 
 def load_config(path: Path) -> dict:
@@ -423,10 +435,7 @@ def run(config: dict) -> None:
             learned_addresses=learned_addresses,
             learned_names=learned_names,
         )
-        for target in (_serve_udp, _serve_tcp):
-            thread = threading.Thread(target=target, args=(host, int(child["port"]), resolver), daemon=True)
-            thread.start()
-            threads.append(thread)
+        ctx = None
         if child.get("tls_port") is not None:
             ctx = tls_proxy.ProxyContext(
                 username=child["username"],
@@ -435,9 +444,18 @@ def run(config: dict) -> None:
                 learned_names=learned_names,
                 log=log,
             )
-            thread = threading.Thread(target=tls_proxy.serve, args=(host, int(child["tls_port"]), ctx), daemon=True)
-            thread.start()
-            threads.append(thread)
+        # Redirected IPv6 traffic lands on ::1, so every service listens on both loopbacks.
+        for family, address in ((socket.AF_INET, host), (socket.AF_INET6, "::1")):
+            for target, port, args in (
+                (_serve_udp, int(child["port"]), (resolver,)),
+                (_serve_tcp, int(child["port"]), (resolver,)),
+                *(((tls_proxy.serve, int(child["tls_port"]), (ctx,)),) if ctx is not None else ()),
+            ):
+                thread = threading.Thread(
+                    target=_listen, args=(target, address, port, args, family), daemon=True
+                )
+                thread.start()
+                threads.append(thread)
 
     print(f"[Family Linux] DNS gateway serving {len(config['children'])} child account(s)", flush=True)
     interval = float(config.get("flush_seconds", 30))
