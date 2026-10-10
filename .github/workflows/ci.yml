@@ -261,12 +261,37 @@ jobs:
           with sync_playwright() as p:
               browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
               page = browser.new_page()
+              failures = []
+              page.on("requestfailed", lambda r: failures.append(f"{r.url[:90]} {r.failure}"))
               for key, url in URLS.items():
+                  failures.clear()
                   try:
                       page.goto(url, timeout=30000)
                       print(f"RESULT {key}: loaded title={page.title()!r}")
                   except Exception as exc:
                       print(f"RESULT {key}: not loaded ({type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''})")
+                  for line in failures[:8]:
+                      print(f"DETAIL {key}: request failed {line}")
+
+              # Connection reuse: open a connection to an allowed Google front end, then try to reach
+              # blocked youtube.com (same front ends) from that page and by navigation.
+              context = browser.new_context()
+              reuse = context.new_page()
+              try:
+                  reuse.goto("https://www.google.com", timeout=30000)
+                  print(f"REUSE allowed google.com: loaded title={reuse.title()!r}")
+                  fetched = reuse.evaluate(
+                      "fetch('https://www.youtube.com/favicon.ico', {mode: 'no-cors'})"
+                      ".then(() => 'loaded', e => 'failed: ' + e)"
+                  )
+                  print(f"REUSE background request to blocked youtube.com: {fetched}")
+              except Exception as exc:
+                  print(f"REUSE allowed google.com: not loaded ({type(exc).__name__}: {str(exc).splitlines()[0][:160]})")
+              try:
+                  reuse.goto("https://www.youtube.com", timeout=30000)
+                  print(f"REUSE navigation to blocked youtube.com: loaded title={reuse.title()!r}")
+              except Exception as exc:
+                  print(f"REUSE navigation to blocked youtube.com: not loaded ({str(exc).splitlines()[0][:120]})")
               browser.close()
           PY
           chmod 644 /tmp/browser_check.py
@@ -285,6 +310,11 @@ jobs:
             echo "FAIL: child loaded a blocked site"; exit 1
           fi
           echo "blocked site for child: not loaded (expected)"
+          if grep -q "REUSE background request to blocked youtube.com: loaded" /tmp/browser_results.txt \
+             || grep -q "REUSE navigation to blocked youtube.com: loaded" /tmp/browser_results.txt; then
+            echo "FAIL: child reached a blocked site through connection reuse"; exit 1
+          fi
+          echo "connection reuse to a blocked site: not possible (expected)"
           if grep -q "RESULT ech: loaded" /tmp/browser_results.txt; then
             echo "MEASURE ECH-capable site: loads for child"
           else
