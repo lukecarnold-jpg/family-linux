@@ -1,0 +1,3 @@
+#!/bin/sh
+# Family Linux parent CLI, installed by the ISO. The package lives in /opt/family-linux/src.
+exec /usr/bin/python3 -m family_linux.cli.family_ctl "$@"

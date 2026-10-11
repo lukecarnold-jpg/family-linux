@@ -115,6 +115,8 @@ class UserManager:
         child_home = Path(f"/home/{child.username}")
         self.adapter.set_permissions(child_home, mode=0o700, owner=child.username, group=CHILD_GROUP)
 
+        self.allow_child_shell_on_login_screen(child.shell)
+
         if child.password:
             self.set_password(child.username, child.password)
 
@@ -124,6 +126,18 @@ class UserManager:
             self.enable_child(child.username)
 
         return True
+
+    def allow_child_shell_on_login_screen(self, shell: str, shells_file: Path = Path("/etc/shells")) -> None:
+        """Lists the child's shell in /etc/shells.
+
+        AccountsService treats accounts whose shell is not listed as system accounts and hides them
+        from the login screen. The child shell is nologin: it still cannot run a terminal session,
+        and the desktop session starts without it (tested in VirtualBox).
+        """
+        current = shells_file.read_text(encoding="utf-8") if shells_file.exists() else ""
+        if shell in current.split():
+            return
+        self.adapter.write_system_file(shells_file, current.rstrip("\n") + f"\n{shell}\n", mode=0o644)
 
     def disable_child(self, username: str) -> None:
         """Disables child login (locks password)."""

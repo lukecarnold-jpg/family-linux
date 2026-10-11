@@ -420,13 +420,52 @@ Limits:
 - Snap's own confinement applies to these apps, not the family AppArmor profile.
 - Not tested: the store download itself, snap refreshes that run without a user request, and the snap store login (`io.snapcraft.snapd.login`, also `auth_admin_keep`).
 
+## Session 16: arm64 install ISO and VirtualBox appliance
+
+Requests from the user: check whether the build works in VirtualBox on an M4 MacBook, build an ISO that supports arm64, and build a pre-configured VirtualBox VM file.
+
+What was built:
+- `scripts/build-autoinstall-iso.sh` repacks the official Ubuntu 24.04.5 live-server ISO for arm64 (the default on Apple silicon) or amd64. It checks the image against Ubuntu's `SHA256SUMS`, adds the autoinstall and a serial console to the boot menu, and keeps the original boot records (`xorriso -boot_image any replay`).
+- The ISO payload is the source, the policy (no passwords), the first-boot unit, and a `family-ctl` wrapper. The autoinstall installs `ubuntu-desktop-minimal`.
+- `family-linux-firstboot.service` runs the full apply once, after cloud-init has created the child accounts, then writes `/var/lib/family-linux/firstboot.done`.
+- `scripts/build-virtualbox-vm.sh` builds the ISO, creates a VirtualBox VM, installs headless, waits for the first-boot apply on the serial log, shuts down with the ACPI button, and exports an `.ova`.
+
+Defects found by installing for real (QEMU on Apple silicon, then VirtualBox 7.2.20), all fixed:
+1. **Logins failed on Python 3.13+.** The autoinstall password hash fell back to a hex SHA-512 digest when `crypt` was missing, which is not a crypt string. Added `provisioner/sha512crypt.py`, checked against glibc vectors from Ubuntu 24.04.
+2. **Install aborted with a child account.** Late commands ran `usermod` on children, but cloud-init creates them on first boot. Removed; the first-boot apply sets the group and home permissions.
+3. **First-boot unit setting ignored.** `StartLimitIntervalSec` was under `[Service]`; moved to `[Unit]`.
+4. **Browser policies missing with no children.** They were written only when a child existed. Now always written.
+5. **Services could not import the package.** Only the first-boot unit had `PYTHONPATH`; `family-dnsd` restarted in a loop. A `.pth` file in `/usr/lib/python3/dist-packages` now points to `/opt/family-linux/src`.
+6. **Child web rules lost after a reboot (fail open).** The `inet family_linux` table was loaded once with `nft -f` and is not persistent. `family-dnsd` now loads it in `ExecStartPre`, so every start (and boot) restores it. If the gateway stops, the redirect stays and the child has no DNS (fail closed). CI never rebooted, so it did not catch this.
+7. **Children hidden on the login screen.** AccountsService hides accounts whose shell is not in `/etc/shells`. The child shell (`nologin`) is now listed there.
+8. **Exported disks with empty firmware entries.** The disk now also has the removable-media boot path (`EFI/BOOT/BOOTAA64.EFI`).
+9. **First boot silently skipped.** Ordering the first-boot unit after `cloud-final.service` made a cycle (`cloud-final` runs after `multi-user.target`, which waits for the unit). systemd logged "Job family-linux-firstboot.service/start deleted to break ordering cycle" and nothing was applied. Now ordered after `cloud-init.service`, which is where the accounts are created.
+10. **Headless build could not see the first boot.** The serial console argument was before `---`, so the installed system did not keep it. It is now after `---` and last, so it is `/dev/console` on the installed system.
+11. **Every boot waited about 2 minutes** on `systemd-networkd-wait-online`, because the autoinstall used networkd while the desktop uses NetworkManager. The autoinstall now sets `renderer: NetworkManager` and disables the networkd wait. Not yet confirmed in an install.
+
+Reboot check (appliance VM, fixes 5-7 built in, fix 9 applied by hand): after `sudo reboot`, the `inet family_linux` table was back, `family-dnsd` was active, and the first-boot unit was skipped by its marker.
+
+Evidence (VirtualBox 7.2.20 on this M4 Mac, arm64 VM, before fixes 5-7 were built into the ISO and then applied by hand):
+- The ISO boots in VirtualBox and the install runs unattended. The installed system boots from the disk with the ISO removed.
+- The first boot applied the policy (23 actions). `family-ctl verify`: all baseline checks passed.
+- Child web filtering: after `family-ctl web block youtube.com --child kid`, the child resolves `youtube.com` to `0.0.0.0`, the parent gets the real address, and the child still resolves `wikipedia.org`.
+- The child signs in to the GNOME desktop with the `nologin` shell (open item 5 answered).
+- ACPI shutdown works (about 70 seconds).
+
+Limits:
+- Serial input does not reach the guest on the VirtualBox ARM VM (output works). The checks above used the VM's screen and virtual keyboard.
+- The appliance holds the parent password given at build time. Build it with your own password; an appliance built with a known password should not be shared.
+- Every import of the same appliance has the same machine ID.
+- The amd64 ISO and appliance paths have not been run.
+- The parent rule applies to `passwd`. A password change forced at login (expired password) uses the login service's stack, which does not include the parent rule.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
 2. Measure a real ECH site once one is found, to see what the real-ECH refusal costs.
 3. Dashboard page for web requests (API exists).
 4. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
-5. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
+5. Child login path: answered in Session 16 (a child signs in to GNOME with the `nologin` shell).
 6. Extend the VM job to launch each approved app under the profile (only `/bin/true`, `env`, and `cat` have been exercised).
 7. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
 8. Add a pre-apply plan (dry-run diff) and consider rollback.

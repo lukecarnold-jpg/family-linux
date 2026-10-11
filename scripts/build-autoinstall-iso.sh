@@ -85,6 +85,7 @@ PYTHONPATH="${PROJECT_ROOT}/src" "$PYTHON" -m family_linux.installer.wizard \
 : > "$PAYLOAD/nocloud/meta-data"
 cp "${BUILD_DIR}/export/policy.yaml" "$PAYLOAD/family-linux/policy.yaml"
 cp "${PROJECT_ROOT}/config/systemd/family-linux-firstboot.service" "$PAYLOAD/family-linux/"
+cp "${PROJECT_ROOT}/config/bin/family-ctl" "$PAYLOAD/family-linux/family-ctl"
 rsync -a --exclude '__pycache__' --exclude '*.egg-info' "${PROJECT_ROOT}/src/" "$PAYLOAD/family-linux/src/"
 
 # 3. Boot menu: start the autoinstall from the ISO's nocloud directory without a prompt
@@ -98,10 +99,11 @@ changed = 0
 ARCH = sys.argv[2]
 for index, line in enumerate(lines):
     if line.lstrip().startswith("linux") and "---" in line:
-        extra = "autoinstall ds=nocloud\\;s=/cdrom/nocloud/ "
-        if ARCH == "arm64":
-            extra += "console=ttyAMA0 "  # serial console on the arm64 virt machine (QEMU, debugging)
-        lines[index] = line.replace("---", extra + "---", 1)
+        # Before "---": for the installer only.
+        lines[index] = line.replace("---", "autoinstall ds=nocloud\\;s=/cdrom/nocloud/ ---", 1)
+        # After "---": also copied to the installed system. The serial console is last, so it is
+        # /dev/console and headless builds (QEMU, VirtualBox) can see the first-boot result.
+        lines[index] += " console=ttyAMA0" if ARCH == "arm64" else " console=ttyS0"
         changed += 1
 if changed == 0:
     sys.exit("No kernel command lines found in grub.cfg; the ISO layout is not what this script expects.")

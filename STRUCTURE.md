@@ -40,6 +40,8 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | `chromium/family-policy.json` | Managed Chromium policy template (SafeSearch, incognito off, URL blocklist) | Reference copy; the generator is `security/browser.py` |
 | `firefox/policies.json` | Managed Firefox policy template | Reference copy; the generator is `security/browser.py` |
 | `systemd/family-policyd.service` | Runs the screen-time daemon as root, `--interval 60` | Installed manually to `/etc/systemd/system` |
+| `systemd/family-linux-firstboot.service` | Runs the full apply once on the first boot of an installed system | Installed by the ISO |
+| `bin/family-ctl` | `family-ctl` wrapper for the installed system | Installed by the ISO to `/usr/local/sbin` |
 | `systemd/family-parent-dashboard.service` | Runs the parent web dashboard on port 8443 as root | Installed manually to `/etc/systemd/system` |
 
 ## Scripts (`scripts/`)
@@ -47,7 +49,8 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | File | Purpose |
 |------|---------|
 | `bootstrap-prototype.sh` | Launcher for every command: `install`, `dashboard`, `ctl`, `policyd`, `verify`, `test`, `autoinstall`. Sets `PYTHONPATH` to `src/`. |
-| `build-autoinstall-iso.sh` | Generates Subiquity `user-data` and prints manual ISO repack steps. It does not build an ISO. |
+| `build-autoinstall-iso.sh` | Builds the install ISO: repacks Ubuntu 24.04.5 live-server (arm64 or amd64) with the autoinstall, the Family Linux payload and the first-boot unit |
+| `build-virtualbox-vm.sh` | Builds the ISO, installs it into a VirtualBox VM headless, waits for the first-boot apply, and exports an `.ova` |
 
 ## Source package (`src/family_linux/`)
 
@@ -70,6 +73,8 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | `audit/logger.py` | Append-only JSON-lines audit log with read and filter | `AuditLogger`, `AuditRecord` |
 | `installer/wizard.py` | Installer state machine and the 12 steps. Non-interactive mode builds the policy from flags. | `InstallerWizard` |
 | `provisioner/system.py` | Saves the policy first, then applies users, firewall, DNS, browsers, AppArmor, security updates, and desktop filters. Failures raise `ProvisioningError` naming the last completed step. | `SystemProvisioner.apply_policy`, `ProvisioningError` |
+| `provisioner/firstboot.py` | First-boot apply with a done marker | `run`, `MARKER_PATH` |
+| `provisioner/sha512crypt.py` | SHA-512 crypt (`$6$`) for autoinstall password hashes (no `crypt` module on Python 3.13+) | `sha512_crypt` |
 | `provisioner/autoinstall.py` | Generates Ubuntu Subiquity autoinstall `user-data` (users, packages, late commands) | `SubiquityAutoinstallGenerator` |
 | `cli/family_ctl.py` | `status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify` subcommands. `verify` reads real state for live checks on Linux. | `FamilyCtl`, `format_table` |
 | `parent_ui/server.py` | `http.server` dashboard: embedded HTML page plus JSON API (`/api/policy`, `/api/child`, `/api/web/block`, and others). Requires a token (bearer header or session cookie), checks Host and Origin, requires JSON bodies. Dependencies are injected via `make_handler()`. | `make_handler`, `run_server` |
@@ -131,6 +136,9 @@ Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. R
 | `test_dashboard.py` | Live HTTP server: token auth, cookie and redirect, Host and Origin checks, JSON and size rules, password length |
 | `test_snap_policy.py` | Polkit rule content and safety, dry-run write, AppGuard hiding unapproved snap apps and not wrapping approved ones |
 | `test_password_policy.py` | PAM block layout, child exemption by name, idempotent insertion, dry run |
+| `test_firstboot_iso.py` | Autoinstall payload and late commands, first-boot marker, gateway reload, login listing |
+| `test_sha512crypt.py` | SHA-512 crypt against glibc vectors; autoinstall hashes |
+| `test_desktop_refresh.py` | Menu refresh units and re-apply |
 | `test_secrets.py` | Passwords never serialised, never in repr, dropped from files on next save |
 | `test_provisioning.py` | Save-before-apply ordering and the `ProvisioningError` message |
 | `integration/test_linux_provisioning.py` | Real accounts, sudoers, and UFW. Root on Linux with `FAMILY_LINUX_INTEGRATION=1` only; skipped elsewhere |

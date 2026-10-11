@@ -173,6 +173,9 @@ def render_service(python: str = sys.executable) -> str:
         "\n"
         "[Service]\n"
         "Type=simple\n"
+        # nftables rules are not kept across reboots, so load the child rules on every start. If the
+        # gateway stops, the redirect stays and the child loses DNS: it fails closed, not open.
+        f"ExecStartPre=/usr/sbin/nft -f {NFT_RULES_PATH}\n"
         f"ExecStart={python} -m family_linux.security.dns_gateway --config {GATEWAY_CONFIG_PATH}\n"
         "Restart=on-failure\n"
         "RestartSec=5\n"

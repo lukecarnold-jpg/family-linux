@@ -59,7 +59,15 @@ PARENT_PASS='Correct-Horse-42-Battery' ./scripts/build-autoinstall-iso.sh
 
 The image is downloaded to `build/` and checked against Ubuntu's `SHA256SUMS`. The parent password must meet the parent rules. Only its hash is written to the ISO.
 
-**VirtualBox on an Apple silicon Mac:** VirtualBox 7.2 or later runs arm64 guests only, so use the arm64 ISO. Create a VM with type Linux and version Ubuntu (64-bit), attach the ISO, and boot. The install runs without prompts. After the first boot, the policy is applied once (see `family-linux-firstboot.service`). This path has not yet been tested on real VirtualBox hardware; see DEV_HIST.md for what has been checked.
+**VirtualBox appliance (.ova):** `scripts/build-virtualbox-vm.sh` builds the ISO, installs it into a new VirtualBox VM without any prompts, waits for the first-boot apply, and exports an appliance. It needs VirtualBox 7.2 or later; on an Apple silicon Mac it builds an arm64 VM.
+
+```bash
+PARENT_PASS='your-own-14+-char-Password!' CHILD_SPECS='kid:Kid:pre_teen:child-password' \
+  ./scripts/build-virtualbox-vm.sh
+# -> dist/family-linux-ubuntu-24.04-arm64.ova   (import: File > Import Appliance)
+```
+
+The appliance contains the parent password you build it with, so use your own and do not share an appliance built with a password other people know.
 
 ### Dashboard sign-in
 

@@ -1,6 +1,9 @@
 [Unit]
 Description=Family Linux: apply the policy once after the first boot
-After=network-online.target systemd-resolved.service
+# cloud-init.service creates the child accounts on first boot; they must exist before the apply.
+# Not cloud-final.service: it runs after multi-user.target, and ordering after it makes a cycle
+# that systemd breaks by dropping this job (seen in VirtualBox).
+After=network-online.target systemd-resolved.service cloud-init.service
 Wants=network-online.target
 ConditionPathExists=!/var/lib/family-linux/firstboot.done
 StartLimitIntervalSec=0
@@ -9,6 +12,9 @@ StartLimitIntervalSec=0
 Type=oneshot
 Environment=PYTHONPATH=/opt/family-linux/src
 ExecStart=/usr/bin/python3 -m family_linux.provisioner.firstboot
+# Also on the console, so a headless build can see when the first boot has finished.
+StandardOutput=journal+console
+StandardError=journal+console
 Restart=on-failure
 RestartSec=60
 
