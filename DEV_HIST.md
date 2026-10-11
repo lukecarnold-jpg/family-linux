@@ -415,7 +415,8 @@ Evidence (Ubuntu 24.04 container, real polkitd, a polkit agent on the child's te
 
 Limits:
 - The container session is not an active desktop session, so polkit's default there is already `auth_admin`. The run shows that every attempt prompts. It does not show that the rule overrides the `auth_admin_keep` default for an active session. That needs a real desktop session and is not yet tested.
-- A newly installed app is hidden or shown at the next apply, not at the moment it is installed. Until then, it appears in the child's menu whatever its approval state.
+- Decision (parent's, this session): authorising an install only installs. It does not approve the app for the child.
+- `security/desktop_refresh.py` and a systemd path unit (`family-appguard.path`) re-apply approvals when apt, snapd or flatpak adds or removes a desktop entry. A new app is therefore hidden from the child as soon as it is installed, until the parent approves it. Tested in the container by running the refresh directly. The path unit itself has not been run under systemd here.
 - Snap's own confinement applies to these apps, not the family AppArmor profile.
 - Not tested: the store download itself, snap refreshes that run without a user request, and the snap store login (`io.snapcraft.snapd.login`, also `auth_admin_keep`).
 

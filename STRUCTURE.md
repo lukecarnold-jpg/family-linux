@@ -89,6 +89,7 @@ Each manager takes a `SystemAdapter`, so the same code path runs in simulation.
 | `browser.py` | Generates and writes Firefox and Chromium managed policies | `BrowserPolicyManager` |
 | `apparmor.py` | Writes and loads the `family-linux-child` profile | `AppArmorManager`, `CHILD_SESSION_PROFILE` |
 | `app_guard.py` | Scans system, snap and flatpak `.desktop` files; writes marked `NoDisplay=true` overrides for unapproved apps in the child's home, and removes overrides that are no longer needed | `AppGuard`, `is_managed_override`, `MANAGED_MARKER` |
+| `desktop_refresh.py` | Re-applies child app approvals; run by `family-appguard.path` (systemd) when apt, snapd or flatpak changes desktop entries | `refresh`, `render_path_unit`, `render_service_unit`, `WATCHED_DIRS` |
 | `snap_policy.py` | Polkit rule that makes each child snap install, update or removal need the parent's password (`AUTH_ADMIN`); installs snapd if missing | `SnapInstallGate`, `render_polkit_rule`, `rule_in_place` |
 | `password_policy.py` | Managed PAM block in `/etc/pam.d/passwd`: `pam_pwquality` for the parent (14+ characters, all four classes) on every `passwd` change, with children exempted by name | `ParentPasswordRules`, `render_pam_block`, `insert_block`, `block_in_place` |
 
@@ -110,6 +111,7 @@ Paths are chosen at runtime. The first set is used when running as root or when 
 | Sudoers drop-in | `/etc/sudoers.d/family-linux-admin` | (none) |
 | Parent password rules (PAM) | `/etc/pam.d/passwd` (managed block) | (none) |
 | Snap install gate (polkit) | `/etc/polkit-1/rules.d/50-family-linux-snap.rules` | (none) |
+| Menu refresh units | `/etc/systemd/system/family-appguard.path`, `family-appguard.service` | (none) |
 
 Note: `SystemAdapter` treats any non-Linux host as dry-run, so on macOS every system write is simulated and nothing is changed.
 
