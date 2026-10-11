@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from family_linux.models import FamilyPolicy, MIN_PARENT_PASSWORD_LENGTH
+from family_linux.models import FamilyPolicy, MIN_PARENT_PASSWORD_LENGTH, WebFilterPolicy
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security.users import UserManager
 from family_linux.security.firewall import FirewallManager
@@ -148,11 +148,11 @@ class SystemProvisioner:
             results["warnings"].append(warning)
         results["actions"].append(f"Per-child web filter applied to {len(policy.children)} child account(s)")
 
-        # 5. Apply Managed Browser policies (security settings only; URL rules are per child above)
-        if policy.children:
-            ref_child = policy.children[0]
-            self.browser.apply_browser_policies(ref_child.web_filter)
-            results["actions"].append("Managed browser security policies deployed for Firefox & Chromium")
+        # 5. Apply Managed Browser policies (security settings only; URL rules are per child above).
+        # Written even with no children, so the browsers are configured before the first account exists.
+        ref_web_filter = policy.children[0].web_filter if policy.children else WebFilterPolicy()
+        self.browser.apply_browser_policies(ref_web_filter)
+        results["actions"].append("Managed browser security policies deployed for Firefox & Chromium")
 
         # 6. Apply AppArmor profile. Always write it so it is ready once AppArmor is active.
         self.apparmor.install_profile()

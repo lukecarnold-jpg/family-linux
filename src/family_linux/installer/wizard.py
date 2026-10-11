@@ -336,6 +336,7 @@ def main() -> None:
     parser.add_argument("--parent-pass", type=str, default=None, help=f"Parent password (required with --non-interactive; at least {MIN_PARENT_PASSWORD_LENGTH} characters with upper-case, lower-case, a number and a special character)")
     parser.add_argument("--child", action="append", help="Child account specification (format: username:fullname:tier:password, password required)")
     parser.add_argument("--export-autoinstall", type=str, help="Export Ubuntu Subiquity autoinstall user-data YAML to file and exit")
+    parser.add_argument("--export-policy", type=str, help="With --export-autoinstall: also write the policy file (no passwords) for first-boot provisioning")
     args = parser.parse_args()
 
     wizard = InstallerWizard(dry_run=args.dry_run, interactive=not args.non_interactive)
@@ -380,6 +381,10 @@ def main() -> None:
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(content)
             print(f"Exported Ubuntu Subiquity autoinstall configuration to {out_path}")
+            if args.export_policy:
+                from family_linux.config import PolicyConfigManager
+                saved = PolicyConfigManager(Path(args.export_policy)).save_policy(policy, reason="ISO build")
+                print(f"Exported policy (no passwords) to {saved}")
             sys.exit(0)
 
         wizard.run_step_10_summary_and_confirmation(policy)

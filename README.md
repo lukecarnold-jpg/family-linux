@@ -47,6 +47,20 @@ python3 -m pip install -e ".[dev]"      # pyyaml, pytest, pytest-cov
 
 Outside Linux, every system change is simulated, so these commands are safe on a development machine. On Linux, `install` without `--dry-run` changes the system after you confirm the summary, so run `--dry-run` first.
 
+### Building the install ISO (arm64 or amd64)
+
+`scripts/build-autoinstall-iso.sh` repacks the official Ubuntu 24.04.5 live-server ISO with an unattended installer, the Family Linux source and policy, and a first-boot step that applies the full policy. It picks arm64 on Apple silicon and amd64 elsewhere; set `ARCH` to override.
+
+```bash
+brew install xorriso                      # or: apt install xorriso
+PARENT_PASS='Correct-Horse-42-Battery' ./scripts/build-autoinstall-iso.sh
+# -> dist/family-linux-ubuntu-24.04-arm64.iso (or -amd64.iso)
+```
+
+The image is downloaded to `build/` and checked against Ubuntu's `SHA256SUMS`. The parent password must meet the parent rules. Only its hash is written to the ISO.
+
+**VirtualBox on an Apple silicon Mac:** VirtualBox 7.2 or later runs arm64 guests only, so use the arm64 ISO. Create a VM with type Linux and version Ubuntu (64-bit), attach the ISO, and boot. The install runs without prompts. After the first boot, the policy is applied once (see `family-linux-firstboot.service`). This path has not yet been tested on real VirtualBox hardware; see DEV_HIST.md for what has been checked.
+
 ### Dashboard sign-in
 
 `dashboard` prints a one-time link:

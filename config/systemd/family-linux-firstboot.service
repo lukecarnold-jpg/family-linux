@@ -1,0 +1,16 @@
+[Unit]
+Description=Family Linux: apply the policy once after the first boot
+After=network-online.target systemd-resolved.service
+Wants=network-online.target
+ConditionPathExists=!/var/lib/family-linux/firstboot.done
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/family-linux/src
+ExecStart=/usr/bin/python3 -m family_linux.provisioner.firstboot
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
