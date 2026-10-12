@@ -30,7 +30,7 @@ from family_linux.audit.logger import AuditLogger
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.apparmor import PROFILE_PATH
-from family_linux.security.browser import CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
+from family_linux.security.browser import BRAVE_POLICY_PATH, CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
 from family_linux.security.password_policy import PAM_PASSWD_PATH, block_in_place
 from family_linux.security.snap_policy import SnapInstallGate
 from family_linux.security.release_upgrades import RELEASE_UPGRADES_PATH, prompt_is_off
@@ -439,6 +439,7 @@ class FamilyCtl:
                 "UFW active with deny incoming",
                 "Firefox managed policy installed",
                 "Chromium managed policy installed",
+                "Brave managed policy installed",
                 "AppArmor child profile loaded in enforce mode",
                 "Unattended security updates enabled",
                 "Parent password rules enforced by PAM",
@@ -464,7 +465,7 @@ class FamilyCtl:
             ufw_ok = bool(ufw and ufw.returncode == 0 and "Status: active" in ufw.stdout and "deny (incoming)" in ufw.stdout)
             record("UFW active with deny incoming", ufw_ok, "ufw status verbose" if ufw else "ufw not installed")
 
-            for label, path in (("Firefox", FIREFOX_POLICY_PATH), ("Chromium", CHROMIUM_POLICY_PATH)):
+            for label, path in (("Firefox", FIREFOX_POLICY_PATH), ("Chromium", CHROMIUM_POLICY_PATH), ("Brave", BRAVE_POLICY_PATH)):
                 record(f"{label} managed policy installed", path.exists(), str(path))
 
             # Loaded and enforcing, as reported by the kernel, not just present on disk.

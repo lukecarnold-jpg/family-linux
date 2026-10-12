@@ -505,6 +505,28 @@ Evidence:
 - The first attempt, an autoinstall `snaps:` entry, left no snaps on the installed system (see above), which is why Firefox moved to the first-boot apply.
 - Not yet checked: the amd64 ISO through a full install.
 
+## Session 20: Other browsers (Brave) and the web filter
+
+Reported by the user: in Brave, all web traffic for a child was denied, including allowed sites such as bbc.co.uk.
+
+Reproduced in the arm64 `.ova` in VirtualBox: Brave 1.97.56 from the Snap Store, approved for the child, run in the child's desktop session.
+
+- `curl` as the child reached `https://www.bbc.co.uk` (HTTP 200). The gateway logged `allow (looked up through the gateway)`.
+- In Brave the BBC page text loaded but no images did. The gateway log showed no refusals. It showed repeated `upstream connect to 2600:1415:...:443 failed: [Errno 113] No route to host`.
+- Cause: VirtualBox's NAT network advertises an IPv6 prefix and default route (`fd17:...`, via `fe80::2`), but IPv6 does not reach the internet. Without Family Linux a browser gets "unreachable" and retries over IPv4. For a child, nftables redirects the connection to the gateway's proxy, which accepts it first; when the proxy's own connection fails it can only close it, so the browser sees a dropped connection and does not retry. Every site the browser reaches over IPv6 fails. The route check is not enough to detect this: the route exists.
+- Fix: `tls_proxy.LearnedNameAddresses` records each name's addresses from the child's allowed lookups (`ChildResolver.learned_name_addresses`). When the connection to the original address fails, the proxy tries that name's other addresses, the other family first, up to 4, with a 2-second timeout while others remain. Only addresses the child's own allowed lookups returned for that name are tried, so nothing new becomes reachable.
+- Checked in the VM with the patched gateway: Brave as the child loaded bbc.co.uk (redirected to bbc.com) with all images.
+
+Browser settings for other browsers:
+
+- Managed settings were written only for Firefox, Chromium and Chrome. They are now also written for Brave (`/etc/brave/policies/managed/`, with `TorDisabled` added) and Microsoft Edge (`/etc/opt/edge/policies/managed/`). `family-ctl verify` checks the Brave file.
+- The Brave snap cannot read them. `brave://policy` showed no policies, and the kernel log showed AppArmor denials for profile `snap.brave.brave` opening `/etc/brave/policies/managed/`. Brave's snap package does not grant access to that folder, and Family Linux cannot change a snap's confinement. The Brave `.deb` from Brave's own repository reads the folder; that path is not tested.
+- What this leaves for a child using the Brave snap: the network filter still applies to every connection. Brave's own settings are not enforced: private windows, developer tools, extensions, SafeSearch, and Brave's own secure DNS. Secure DNS and Tor windows fail closed rather than bypass: the addresses they return or use were not returned by the child's lookups, so the proxy refuses them ("address ... not returned by an allowed lookup"). That refusal would also explain a browser where nothing loads.
+- Decision (parent's, this session): the Brave snap (`brave_brave`) is always blocked for children, since its settings cannot be enforced. The Brave package from Brave's repository (`brave-browser`) is not blocked.
+- Not tested: whether the user's own report had the IPv6 cause or Brave's secure DNS. The gateway log tells them apart (see the parent guide).
+
+Evidence: unit tests, 224 passed, 5 skipped. New tests: the per-name store and its expiry, candidate order and that unlearned addresses are never tried, a full proxy connection that falls back from an unreachable IPv6 address to IPv4, the resolver recording names, and policies written for every supported browser.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

@@ -166,7 +166,7 @@ def test_app_centre_is_visible_to_children_and_approved_by_default():
         assert "org.gnome.Software" in DEFAULT_APPROVED_APPS[tier.value]
 
 
-@pytest.mark.parametrize("desktop_id", ["org.gnome.Terminal", "org.gnome.Settings", "snap-store_snap-store"])
+@pytest.mark.parametrize("desktop_id", ["org.gnome.Terminal", "org.gnome.Settings", "snap-store_snap-store", "brave_brave"])
 def test_ubuntu_system_tools_cannot_be_approved_for_a_child(desktop_id):
     # The always-blocked list held command names; Ubuntu 24.04 menus use these desktop IDs.
     from family_linux.models import ChildAccount
@@ -204,3 +204,15 @@ def test_release_upgrade_notice_is_turned_off_keeping_the_rest_of_the_file(tmp_p
     assert str(path) not in adapter.simulated_files  # already off: no rewrite
     assert prompt_is_off(with_prompt_never(""))
     assert not prompt_is_off(UBUNTU_RELEASE_UPGRADES)
+
+
+def test_only_the_brave_snap_is_blocked_not_the_brave_package():
+    from family_linux.models import ChildAccount
+    from family_linux.security.app_guard import AppGuard
+    from family_linux.security.adapter import SystemAdapter
+
+    child = ChildAccount.create("kid", "Kid", "teen")
+    child.app_policy.approved_apps.append("brave")
+    guard = AppGuard(SystemAdapter(dry_run=True))
+    assert not guard.is_app_allowed(child, "brave_brave.desktop")
+    assert guard.is_app_allowed(child, "brave-browser.desktop")

@@ -148,6 +148,10 @@ ALWAYS_BLOCKED_COMMANDS: List[str] = [
     "org.gnome.settings",
     "snap-store_snap-store",
     "snap-store_ubuntu-software",
+    # Brave from the Snap Store: its sandbox cannot read managed browser settings, so private
+    # windows, SafeSearch and its own secure DNS stay under the child's control. The Brave
+    # package from Brave's own repository (brave-browser) is not blocked.
+    "brave_brave",
 ]
 
 

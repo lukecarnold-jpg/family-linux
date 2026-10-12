@@ -143,6 +143,22 @@ Look for any line marked **FAIL** that mentions DNS or web. If you see one, ask 
 - **The filter does not stop your child from using a phone or tablet**, or a computer that is not running Family Linux.
 - **Children cannot use a terminal or install software without your password**, so they cannot turn the filter off.
 
+## Other web browsers
+
+The filter checks every connection a child's account makes, whichever browser they use. Family Linux also applies its browser settings (private windows off, SafeSearch on, developer tools off) to these browsers:
+
+| Browser | Filter applies | Browser settings applied |
+|---|---|---|
+| Firefox (installed with Family Linux), Chromium, Google Chrome, Microsoft Edge, Brave from Brave's own website | Yes | Should be, but not yet checked on an installed system |
+| Brave from the App Centre | Yes | **No.** It cannot read the settings, so Family Linux keeps it hidden from children and it cannot be approved for them |
+| Any other browser | Yes | No |
+
+If a browser shows nothing at all for your child, even allowed sites, the browser is probably using its own "secure DNS" setting. The filter refuses those connections on purpose, so nothing gets around it. Turn off secure DNS in that browser's settings, or use Firefox instead. To check, run this and look for "not returned by an allowed lookup":
+
+```
+sudo journalctl -u family-dnsd --since "10 min ago" | grep refuse
+```
+
 ## Words used in this guide
 
 - **Domain:** the address of a site, such as `example.com`.

@@ -258,7 +258,7 @@ class FamilyControlsWindow(Adw.ApplicationWindow):
         for app in installed:
             app_id, name = app["id"], app["name"]
             if app_id.lower() in blocked:
-                row = Adw.ActionRow(title=name, subtitle="Always hidden for children (system tool)")
+                row = Adw.ActionRow(title=name, subtitle="Always hidden for children")
                 apps_expander.add_row(row)
                 continue
             switch = Adw.SwitchRow(title=name, subtitle=app_id, active=bool(approved_entries_for(app_id, approved)))

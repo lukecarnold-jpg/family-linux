@@ -288,6 +288,18 @@ def test_allowed_answers_feed_the_child_allow_list_but_blocked_answers_do_not(tm
     assert seen == []
 
 
+def test_allowed_answers_record_each_names_addresses_for_the_proxy_fallback(tmp_path):
+    from family_linux.security.tls_proxy import LearnedNameAddresses
+
+    fwd = lambda query, upstream, tcp: _answer_reply(query, [("93.184.216.34", 300)])
+    res, _ = resolver(tmp_path, fwd)
+    res.learned_name_addresses = LearnedNameAddresses()
+    res.answer(make_query("Example.org"))
+    res.answer(make_query("www.omegle.com"))  # blocked: its answer is never recorded
+    assert res.learned_name_addresses.addresses("example.org.") == ["93.184.216.34"]
+    assert res.learned_name_addresses.addresses("www.omegle.com") == []
+
+
 def test_nft_rules_drop_child_traffic_except_allowed_addresses():
     rules = render_nft([(1002, 5301, 5401)])
     assert "set allow4_1002 { type ipv4_addr; flags timeout; }" in rules
