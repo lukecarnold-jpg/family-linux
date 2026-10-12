@@ -21,7 +21,6 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${PROJECT_ROOT}/build"
 OUTPUT_DIR="${PROJECT_ROOT}/dist"
 UBUNTU_RELEASE="${UBUNTU_RELEASE:-24.04.5}"
-UBUNTU_BASE_URL="https://cdimage.ubuntu.com/releases/24.04/release"
 
 case "$(uname -m)" in
     arm64|aarch64) DEFAULT_ARCH=arm64 ;;
@@ -41,6 +40,12 @@ done
 : "${PARENT_PASS:?Set PARENT_PASS to the parent password (min 14 characters, with upper-case, lower-case, a number and a special character)}"
 
 ISO_NAME="ubuntu-${UBUNTU_RELEASE}-live-server-${ARCH}.iso"
+# arm64 images are on cdimage.ubuntu.com; amd64 images are on releases.ubuntu.com.
+if [ "$ARCH" = arm64 ]; then
+    UBUNTU_BASE_URL="https://cdimage.ubuntu.com/releases/24.04/release"
+else
+    UBUNTU_BASE_URL="https://releases.ubuntu.com/24.04"
+fi
 ISO_SRC="${BUILD_DIR}/${ISO_NAME}"
 PAYLOAD="${BUILD_DIR}/payload"
 OUT_ISO="${OUTPUT_DIR}/family-linux-ubuntu-24.04-${ARCH}.iso"
