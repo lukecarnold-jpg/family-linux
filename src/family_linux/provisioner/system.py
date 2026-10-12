@@ -17,6 +17,8 @@ from family_linux.security.dns_filter import DNSFilterManager
 from family_linux.security.browser import BrowserPolicyManager
 from family_linux.security.apparmor import AppArmorManager
 from family_linux.security.password_policy import ParentPasswordRules
+from family_linux.security.snap_policy import SnapInstallGate
+from family_linux.security.desktop_refresh import PATH_UNIT_NAME, WATCHED_DIRS, PATH_UNIT_PATH, SERVICE_UNIT_PATH, render_path_unit, render_service_unit
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.desktop_lockdown import DesktopLockdown
 from family_linux.security.web_gateway import WebGateway
@@ -48,6 +50,7 @@ class SystemProvisioner:
         self.browser = BrowserPolicyManager(self.adapter)
         self.apparmor = AppArmorManager(self.adapter)
         self.parent_password_rules = ParentPasswordRules(self.adapter)
+        self.snap_gate = SnapInstallGate(self.adapter)
         self.app_guard = AppGuard(self.adapter, self.audit)
         self.web_gateway = WebGateway(self.adapter)
 
@@ -89,6 +92,18 @@ class SystemProvisioner:
 
         return results
 
+    def _install_menu_refresh_units(self, results: Dict[str, Any]) -> None:
+        for directory in WATCHED_DIRS:
+            self.adapter.run_command(["mkdir", "-p", str(directory)])
+        self.adapter.write_system_file(SERVICE_UNIT_PATH, render_service_unit(), mode=0o644)
+        self.adapter.write_system_file(PATH_UNIT_PATH, render_path_unit(), mode=0o644)
+        self.adapter.run_command(["systemctl", "daemon-reload"])
+        enabled = self.adapter.run_command(["systemctl", "enable", "--now", PATH_UNIT_NAME])
+        if enabled.returncode == 0:
+            results["actions"].append("Child app menus refresh when apps are installed or removed")
+        else:
+            results["warnings"].append(f"{PATH_UNIT_NAME} could not be enabled; new apps stay visible until the next apply")
+
     def _apply_system_layers(self, policy: FamilyPolicy, results: Dict[str, Any]) -> None:
         """Applies each system layer in order, appending to results."""
         # Setup user privilege boundaries
@@ -103,6 +118,11 @@ class SystemProvisioner:
         for warning in self.parent_password_rules.apply([child.username for child in policy.children]):
             results["warnings"].append(warning)
         results["actions"].append(f"Parent password rules ({MIN_PARENT_PASSWORD_LENGTH}+ chars, mixed classes) enforced on password changes")
+
+        # Snap store: snapd installed; every child install, update or removal needs the parent's password
+        for warning in self.snap_gate.apply([child.username for child in policy.children]):
+            results["warnings"].append(warning)
+        results["actions"].append("Snap installs for child accounts require the parent's password on every attempt")
 
         # Provision children
         for child in policy.children:
@@ -167,4 +187,6 @@ class SystemProvisioner:
             results["actions"].append(
                 f"Child desktop menu filtered for '{child.username}' ({hidden} apps hidden, {confined} confined)"
             )
+        # Keep menus in step with installs and removals between full applies
+        self._install_menu_refresh_units(results)
 

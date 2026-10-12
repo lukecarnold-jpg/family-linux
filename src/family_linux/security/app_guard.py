@@ -15,10 +15,29 @@ from family_linux.security.adapter import SystemAdapter
 from family_linux.security.apparmor import PROFILE_NAME
 from family_linux.audit.logger import AuditLogger
 
+# snapd exports the desktop entries of installed snaps here (Ubuntu adds it to XDG_DATA_DIRS).
+SNAP_DESKTOP_DIR = Path("/var/lib/snapd/desktop/applications")
+
+# Flatpak exports desktop entries for system-wide installs here.
+FLATPAK_DESKTOP_DIR = Path("/var/lib/flatpak/exports/share/applications")
+
 SYSTEM_APP_DIRS = [
     Path("/usr/share/applications"),
     Path("/usr/local/share/applications"),
+    SNAP_DESKTOP_DIR,
+    FLATPAK_DESKTOP_DIR,
 ]
+
+# First line of every override this module writes. Files without it were not written here and
+# are left alone.
+MANAGED_MARKER = "# Managed by Family Linux (app approval). Changes here are overwritten at the next apply."
+
+
+def is_managed_override(text: str) -> bool:
+    """True for overrides written by this module, including the hidden template used before the marker."""
+    if MANAGED_MARKER in text:
+        return True
+    return "NoDisplay=true" in text and "Hidden=true" in text and "Exec=" not in text
 
 
 class AppGuard:
@@ -100,6 +119,7 @@ class AppGuard:
         confine: bool = False,
         home_root: Path = Path("/home"),
         app_dirs: Optional[List[Path]] = None,
+        snap_dir: Path = SNAP_DESKTOP_DIR,
     ) -> Tuple[int, int]:
         """Writes the child's ~/.local/share/applications overrides.
 
@@ -117,10 +137,13 @@ class AppGuard:
 
         hidden_count = 0
         confined_count = 0
+        discovered_ids = set()
         for app in self.discover_system_apps(app_dirs):
+            discovered_ids.add(app["id"])
             override_file = child_apps_dir / f"{app['id']}.desktop"
             if not self.is_app_allowed(child, app["id"]):
                 override_content = (
+                    f"{MANAGED_MARKER}\n"
                     "[Desktop Entry]\n"
                     "Type=Application\n"
                     f"Name={app['name']}\n"
@@ -129,15 +152,34 @@ class AppGuard:
                 )
                 self.adapter.write_system_file(override_file, override_content, mode=0o644)
                 hidden_count += 1
-            elif confine:
+            elif confine and Path(app["file"]).parent != snap_dir:
+                # snapd already confines snap apps; wrapping them in aa-exec is not needed and
+                # could stop them from starting.
                 try:
                     source = Path(app["file"]).read_text(encoding="utf-8", errors="ignore")
                 except OSError:
                     continue
-                self.adapter.write_system_file(override_file, confine_desktop_entry(source), mode=0o644)
+                self.adapter.write_system_file(
+                    override_file, f"{MANAGED_MARKER}\n" + confine_desktop_entry(source), mode=0o644
+                )
                 confined_count += 1
+            else:
+                # Approved and not confined. An override written while the app was unapproved would
+                # keep it hidden, so remove it. Overrides not written here are kept.
+                self._remove_managed_override(override_file)
+
+        # Apps that are no longer installed: their hidden overrides are not needed any more.
+        if child_apps_dir.exists():
+            for leftover in child_apps_dir.glob("*.desktop"):
+                if leftover.stem not in discovered_ids:
+                    self._remove_managed_override(leftover)
 
         return hidden_count, confined_count
+
+    def _remove_managed_override(self, override_file: Path) -> None:
+        """Removes an override only if this module wrote it. In dry run the removal is recorded."""
+        if override_file.exists() and is_managed_override(override_file.read_text(encoding="utf-8", errors="ignore")):
+            self.adapter.remove_system_file(override_file)
 
 
 AA_EXEC_PREFIX = f"aa-exec -p {PROFILE_NAME} -- "

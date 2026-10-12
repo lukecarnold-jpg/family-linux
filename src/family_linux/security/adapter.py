@@ -32,6 +32,7 @@ class SystemAdapter:
         self.dry_run = dry_run or (platform.system() != "Linux")
         self.executed_commands: List[List[str]] = []
         self.simulated_users: Dict[str, Dict] = {}
+        self.removed_files: set = set()
         self.simulated_files: Dict[str, str] = {}
         self.simulated_firewall_rules: List[str] = []
 
@@ -117,6 +118,14 @@ class SystemAdapter:
             with open(target, "w", encoding="utf-8") as f:
                 f.write(content)
         os.chmod(target, mode)
+
+    def remove_system_file(self, path: Path | str) -> None:
+        """Removes a file this tool wrote, or records the removal in dry-run mode."""
+        target = Path(path)
+        if self.dry_run or not self.is_root():
+            self.removed_files.add(str(target))
+            return
+        target.unlink(missing_ok=True)
 
     def set_permissions(self, path: Path | str, mode: int, owner: Optional[str] = None, group: Optional[str] = None) -> None:
         """Sets file/directory permissions and ownership."""

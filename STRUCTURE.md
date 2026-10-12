@@ -88,7 +88,9 @@ Each manager takes a `SystemAdapter`, so the same code path runs in simulation.
 | `dns_filter.py` | systemd-resolved drop-in with family DNS servers; managed `/etc/hosts` block section | `DNSFilterManager` |
 | `browser.py` | Generates and writes Firefox and Chromium managed policies | `BrowserPolicyManager` |
 | `apparmor.py` | Writes and loads the `family-linux-child` profile | `AppArmorManager`, `CHILD_SESSION_PROFILE` |
-| `app_guard.py` | Scans `.desktop` files and writes `NoDisplay=true` overrides for unapproved apps in child home | `AppGuard` |
+| `app_guard.py` | Scans system, snap and flatpak `.desktop` files; writes marked `NoDisplay=true` overrides for unapproved apps in the child's home, and removes overrides that are no longer needed | `AppGuard`, `is_managed_override`, `MANAGED_MARKER` |
+| `desktop_refresh.py` | Re-applies child app approvals; run by `family-appguard.path` (systemd) when apt, snapd or flatpak changes desktop entries | `refresh`, `render_path_unit`, `render_service_unit`, `WATCHED_DIRS` |
+| `snap_policy.py` | Polkit rule that makes each child snap install, update or removal need the parent's password (`AUTH_ADMIN`); installs snapd if missing | `SnapInstallGate`, `render_polkit_rule`, `rule_in_place` |
 | `password_policy.py` | Managed PAM block in `/etc/pam.d/passwd`: `pam_pwquality` for the parent (14+ characters, all four classes) on every `passwd` change, with children exempted by name | `ParentPasswordRules`, `render_pam_block`, `insert_block`, `block_in_place` |
 
 ### Runtime paths
@@ -108,6 +110,8 @@ Paths are chosen at runtime. The first set is used when running as root or when 
 | DNS drop-in | `/etc/systemd/resolved.conf.d/family-linux-dns.conf` | (none) |
 | Sudoers drop-in | `/etc/sudoers.d/family-linux-admin` | (none) |
 | Parent password rules (PAM) | `/etc/pam.d/passwd` (managed block) | (none) |
+| Snap install gate (polkit) | `/etc/polkit-1/rules.d/50-family-linux-snap.rules` | (none) |
+| Menu refresh units | `/etc/systemd/system/family-appguard.path`, `family-appguard.service` | (none) |
 
 Note: `SystemAdapter` treats any non-Linux host as dry-run, so on macOS every system write is simulated and nothing is changed.
 
@@ -125,6 +129,7 @@ Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. R
 | `test_screentime.py` | Usage tracking, quota and curfew evaluation, one enforcement cycle |
 | `test_security.py` | Security managers in simulation; dry-run reaches policy and audit writers |
 | `test_dashboard.py` | Live HTTP server: token auth, cookie and redirect, Host and Origin checks, JSON and size rules, password length |
+| `test_snap_policy.py` | Polkit rule content and safety, dry-run write, AppGuard hiding unapproved snap apps and not wrapping approved ones |
 | `test_password_policy.py` | PAM block layout, child exemption by name, idempotent insertion, dry run |
 | `test_secrets.py` | Passwords never serialised, never in repr, dropped from files on next save |
 | `test_provisioning.py` | Save-before-apply ordering and the `ProvisioningError` message |

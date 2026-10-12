@@ -386,6 +386,40 @@ Limits:
 - Only the `passwd` PAM service is covered. `chpasswd` (used by the provisioner) and any other PAM service are not.
 - Ubuntu's stock `pam_pwquality` settings for children remain as they were.
 
+## Session 15: snap installs need the parent's password
+
+Requirement from the user: children can use Ubuntu's app store (snap), and each child attempt to install must prompt for the parent's account to authorise it.
+
+Mechanism: PolicyKit, which snapd checks before it installs, updates or removes a snap. The stock policy (`/usr/share/polkit-1/actions/io.snapcraft.snapd.policy`, from the snapd package) is `auth_admin_keep` for an active session. That remembers an authorisation for several minutes, so later attempts would not prompt.
+- `security/snap_policy.py` writes `/etc/polkit-1/rules.d/50-family-linux-snap.rules`. For child accounts it returns `AUTH_ADMIN` for `io.snapcraft.snapd.manage` and `manage-interfaces`, so every attempt asks for admin authentication and nothing is kept. Children are named in the rule, as with the PAM rule, not by group.
+- The only administrator is the parent, so the prompt takes the parent's password. Ubuntu's base image includes an extra `ubuntu` admin user; the test below removes it, and a Family Linux install does not create one.
+- snapd is installed if missing (apt). The rule is written on every apply.
+- AppGuard now also reads snapd's desktop directory (`/var/lib/snapd/desktop/applications`). Unapproved snap apps are hidden like other apps. Approved snap apps are not wrapped in `aa-exec`, because snapd already confines them.
+
+Visibility follows approval, in both directions (a bug fixed in this session):
+- Before, an app hidden at one apply kept its hidden override. Approving it later did not make it visible. Overrides now carry a marker line. An approved app's managed override is removed. Overrides without the marker are not touched.
+- Overrides for apps that are no longer installed are removed.
+- AppGuard also reads flatpak's system exports (`/var/lib/flatpak/exports/share/applications`).
+- Provisioning sets the parent's home to `0700`. Before, Ubuntu's default `0750` kept it private from children, but this makes the rule explicit.
+
+Answer to "can apps the parent installs be invisible to the child unless the child has them?": yes. Visibility is decided by the child's approved list, not by who installed the app.
+- User-level installs in the parent's home (`~/.local/share/applications`, `~/.local/share/flatpak`, `~/.local/bin`) are invisible and unusable from the child's account. The child is denied access to the parent's home (tested: `Permission denied`).
+- System-wide installs (apt, snap, system flatpak) are visible to every account, so the child's menu hides them unless they are approved for that child.
+- `family-ctl verify` has a live check for the rule.
+
+Evidence (Ubuntu 24.04 container, real polkitd, a polkit agent on the child's terminal, snapd's policy file):
+- Without an agent, the child's request is refused (`rc=2`, authentication required).
+- With the agent, the prompt says "Authenticating as: parent", and the parent's password authorises the request (`rc=0`).
+- A second request with no prompt allowed is refused (`rc=2`), so nothing is remembered.
+- A third request prompts for the parent again and is authorised.
+
+Limits:
+- The container session is not an active desktop session, so polkit's default there is already `auth_admin`. The run shows that every attempt prompts. It does not show that the rule overrides the `auth_admin_keep` default for an active session. That needs a real desktop session and is not yet tested.
+- Decision (parent's, this session): authorising an install only installs. It does not approve the app for the child.
+- `security/desktop_refresh.py` and a systemd path unit (`family-appguard.path`) re-apply approvals when apt, snapd or flatpak adds or removes a desktop entry. A new app is therefore hidden from the child as soon as it is installed, until the parent approves it. Tested in the container by running the refresh directly. The path unit itself has not been run under systemd here.
+- Snap's own confinement applies to these apps, not the family AppArmor profile.
+- Not tested: the store download itself, snap refreshes that run without a user request, and the snap store login (`io.snapcraft.snapd.login`, also `auth_admin_keep`).
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
