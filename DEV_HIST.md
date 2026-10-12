@@ -386,13 +386,101 @@ Limits:
 - Only the `passwd` PAM service is covered. `chpasswd` (used by the provisioner) and any other PAM service are not.
 - Ubuntu's stock `pam_pwquality` settings for children remain as they were.
 
+## Session 15: snap installs need the parent's password
+
+Requirement from the user: children can use Ubuntu's app store (snap), and each child attempt to install must prompt for the parent's account to authorise it.
+
+Mechanism: PolicyKit, which snapd checks before it installs, updates or removes a snap. The stock policy (`/usr/share/polkit-1/actions/io.snapcraft.snapd.policy`, from the snapd package) is `auth_admin_keep` for an active session. That remembers an authorisation for several minutes, so later attempts would not prompt.
+- `security/snap_policy.py` writes `/etc/polkit-1/rules.d/50-family-linux-snap.rules`. For child accounts it returns `AUTH_ADMIN` for `io.snapcraft.snapd.manage` and `manage-interfaces`, so every attempt asks for admin authentication and nothing is kept. Children are named in the rule, as with the PAM rule, not by group.
+- The only administrator is the parent, so the prompt takes the parent's password. Ubuntu's base image includes an extra `ubuntu` admin user; the test below removes it, and a Family Linux install does not create one.
+- snapd is installed if missing (apt). The rule is written on every apply.
+- AppGuard now also reads snapd's desktop directory (`/var/lib/snapd/desktop/applications`). Unapproved snap apps are hidden like other apps. Approved snap apps are not wrapped in `aa-exec`, because snapd already confines them.
+
+Visibility follows approval, in both directions (a bug fixed in this session):
+- Before, an app hidden at one apply kept its hidden override. Approving it later did not make it visible. Overrides now carry a marker line. An approved app's managed override is removed. Overrides without the marker are not touched.
+- Overrides for apps that are no longer installed are removed.
+- AppGuard also reads flatpak's system exports (`/var/lib/flatpak/exports/share/applications`).
+- Provisioning sets the parent's home to `0700`. Before, Ubuntu's default `0750` kept it private from children, but this makes the rule explicit.
+
+Answer to "can apps the parent installs be invisible to the child unless the child has them?": yes. Visibility is decided by the child's approved list, not by who installed the app.
+- User-level installs in the parent's home (`~/.local/share/applications`, `~/.local/share/flatpak`, `~/.local/bin`) are invisible and unusable from the child's account. The child is denied access to the parent's home (tested: `Permission denied`).
+- System-wide installs (apt, snap, system flatpak) are visible to every account, so the child's menu hides them unless they are approved for that child.
+- `family-ctl verify` has a live check for the rule.
+
+Evidence (Ubuntu 24.04 container, real polkitd, a polkit agent on the child's terminal, snapd's policy file):
+- Without an agent, the child's request is refused (`rc=2`, authentication required).
+- With the agent, the prompt says "Authenticating as: parent", and the parent's password authorises the request (`rc=0`).
+- A second request with no prompt allowed is refused (`rc=2`), so nothing is remembered.
+- A third request prompts for the parent again and is authorised.
+
+Limits:
+- The container session is not an active desktop session, so polkit's default there is already `auth_admin`. The run shows that every attempt prompts. It does not show that the rule overrides the `auth_admin_keep` default for an active session. That needs a real desktop session and is not yet tested.
+- Decision (parent's, this session): authorising an install only installs. It does not approve the app for the child.
+- `security/desktop_refresh.py` and a systemd path unit (`family-appguard.path`) re-apply approvals when apt, snapd or flatpak adds or removes a desktop entry. A new app is therefore hidden from the child as soon as it is installed, until the parent approves it. Tested in the container by running the refresh directly. The path unit itself has not been run under systemd here.
+- Snap's own confinement applies to these apps, not the family AppArmor profile.
+- Not tested: the store download itself, snap refreshes that run without a user request, and the snap store login (`io.snapcraft.snapd.login`, also `auth_admin_keep`).
+
+## Session 16: arm64 install ISO and VirtualBox appliance
+
+Requests from the user: check whether the build works in VirtualBox on an M4 MacBook, build an ISO that supports arm64, and build a pre-configured VirtualBox VM file.
+
+What was built:
+- `scripts/build-autoinstall-iso.sh` repacks the official Ubuntu 24.04.5 live-server ISO for arm64 (the default on Apple silicon) or amd64. It checks the image against Ubuntu's `SHA256SUMS`, adds the autoinstall and a serial console to the boot menu, and keeps the original boot records (`xorriso -boot_image any replay`).
+- The ISO payload is the source, the policy (no passwords), the first-boot unit, and a `family-ctl` wrapper. The autoinstall installs `ubuntu-desktop-minimal`.
+- `family-linux-firstboot.service` runs the full apply once, after cloud-init has created the child accounts, then writes `/var/lib/family-linux/firstboot.done`.
+- `scripts/build-virtualbox-vm.sh` builds the ISO, creates a VirtualBox VM, installs headless, waits for the first-boot apply on the serial log, shuts down with the ACPI button, and exports an `.ova`.
+
+Defects found by installing for real (QEMU on Apple silicon, then VirtualBox 7.2.20), all fixed:
+1. **Logins failed on Python 3.13+.** The autoinstall password hash fell back to a hex SHA-512 digest when `crypt` was missing, which is not a crypt string. Added `provisioner/sha512crypt.py`, checked against glibc vectors from Ubuntu 24.04.
+2. **Install aborted with a child account.** Late commands ran `usermod` on children, but cloud-init creates them on first boot. Removed; the first-boot apply sets the group and home permissions.
+3. **First-boot unit setting ignored.** `StartLimitIntervalSec` was under `[Service]`; moved to `[Unit]`.
+4. **Browser policies missing with no children.** They were written only when a child existed. Now always written.
+5. **Services could not import the package.** Only the first-boot unit had `PYTHONPATH`; `family-dnsd` restarted in a loop. A `.pth` file in `/usr/lib/python3/dist-packages` now points to `/opt/family-linux/src`.
+6. **Child web rules lost after a reboot (fail open).** The `inet family_linux` table was loaded once with `nft -f` and is not persistent. `family-dnsd` now loads it in `ExecStartPre`, so every start (and boot) restores it. If the gateway stops, the redirect stays and the child has no DNS (fail closed). CI never rebooted, so it did not catch this.
+7. **Children hidden on the login screen.** AccountsService treats accounts with a `nologin` shell as system accounts and hides them. A first fix listed `nologin` in `/etc/shells`; the imported appliance showed it had no effect, and it was removed. Provisioning now writes `SystemAccount=false` to the child's AccountsService file (other keys kept). After a reboot, the login screen listed the child.
+8. **Exported disks with empty firmware entries.** The disk now also has the removable-media boot path (`EFI/BOOT/BOOTAA64.EFI`).
+9. **First boot silently skipped.** Ordering the first-boot unit after `cloud-final.service` made a cycle (`cloud-final` runs after `multi-user.target`, which waits for the unit). systemd logged "Job family-linux-firstboot.service/start deleted to break ordering cycle" and nothing was applied. Now ordered after `cloud-init.service`, which is where the accounts are created.
+10. **Headless build could not see the first boot.** The serial console argument was before `---`, so the installed system did not keep it. It is now after `---` and last, so it is `/dev/console` on the installed system.
+11. **Every boot waited about 2 minutes** on `systemd-networkd-wait-online`, because the installed system used networkd while the desktop uses NetworkManager. A late command now replaces the installed system's netplan config with `01-network-manager-all.yaml` (as Ubuntu Desktop has) and disables the networkd wait. A first attempt set `renderer: NetworkManager` in the autoinstall network config; that also applies to the live installer, which has no NetworkManager, and the install failed at its network step. Caught by the next VirtualBox build and corrected.
+
+Appliance result (all fixes built in): `scripts/build-virtualbox-vm.sh` ran end to end and exported `dist/family-linux-ubuntu-24.04-arm64.ova` (4.2 GB). Imported as a new VM: it booted in 2.6 seconds, `family-ctl verify` passed every check, and the login screen listed both the parent and the child.
+
+Reboot check (appliance VM, fixes 5-7 built in, fix 9 applied by hand): after `sudo reboot`, the `inet family_linux` table was back, `family-dnsd` was active, and the first-boot unit was skipped by its marker.
+
+Evidence (VirtualBox 7.2.20 on this M4 Mac, arm64 VM, before fixes 5-7 were built into the ISO and then applied by hand):
+- The ISO boots in VirtualBox and the install runs unattended. The installed system boots from the disk with the ISO removed.
+- The first boot applied the policy (23 actions). `family-ctl verify`: all baseline checks passed.
+- Child web filtering: after `family-ctl web block youtube.com --child kid`, the child resolves `youtube.com` to `0.0.0.0`, the parent gets the real address, and the child still resolves `wikipedia.org`.
+- The child signs in to the GNOME desktop with the `nologin` shell (open item 5 answered).
+- ACPI shutdown works (about 70 seconds).
+
+Limits:
+- Serial input does not reach the guest on the VirtualBox ARM VM (output works). The checks above used the VM's screen and virtual keyboard.
+- The appliance holds the parent password given at build time. Build it with your own password; an appliance built with a known password should not be shared.
+- Every import of the same appliance has the same machine ID.
+- The amd64 ISO and appliance paths have not been run.
+- The parent rule applies to `passwd`. A password change forced at login (expired password) uses the login service's stack, which does not include the parent rule.
+
+## Session 17: time zone in setup
+
+Found in the Session 16 review: nothing set the time zone, so installed systems ran on UTC (the VirtualBox VM showed 10:57 at 21:57 local time). Curfews and bedtimes are evaluated in local time, so an 8 PM curfew would have applied at the wrong hour.
+
+- `timezones.py`: `is_valid_timezone` (IANA names only, checked with `zoneinfo`; rejects paths and shell characters) and `detect_host_timezone` (TZ, then the `/etc/localtime` link; UTC if unreadable).
+- `FamilyPolicy.timezone` (optional; validated; saved in the policy file).
+- Installer step 1 asks for the time zone after the language, defaulting to the computer's own, and retries on an unknown name. The summary shows it. Unattended installs take `--timezone`.
+- The autoinstall sets `timezone:` (or `geoip` when the policy has none). The apply runs `timedatectl set-timezone`.
+- `family-ctl verify` checks that the system time zone matches the policy.
+- `build-autoinstall-iso.sh` and `build-virtualbox-vm.sh` take `TIMEZONE`.
+
+Tests: `tests/test_timezone.py` (validation, host detection, policy round trip, autoinstall, apply, unattended and interactive installer). An unattended export on this Mac wrote `timezone: Australia/Melbourne` to both the autoinstall and the policy. Not yet run in a VirtualBox install.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
 2. Measure a real ECH site once one is found, to see what the real-ECH refusal costs.
 3. Dashboard page for web requests (API exists).
 4. Terminals and interpreters outside the profile: file-manager "open terminal" and interpreter-based escape routes (see Session 5).
-5. Child login path: the child's shell is `nologin`. Test that a desktop login still works for a child account (GDM or LightDM on a real session).
+5. Child login path: answered in Session 16 (a child signs in to GNOME with the `nologin` shell).
 6. Extend the VM job to launch each approved app under the profile (only `/bin/true`, `env`, and `cat` have been exercised).
 7. Check browser policy on Ubuntu snap builds and move the policy to where snaps read it, if different.
 8. Add a pre-apply plan (dry-run diff) and consider rollback.

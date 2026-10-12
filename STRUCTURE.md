@@ -40,6 +40,8 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | `chromium/family-policy.json` | Managed Chromium policy template (SafeSearch, incognito off, URL blocklist) | Reference copy; the generator is `security/browser.py` |
 | `firefox/policies.json` | Managed Firefox policy template | Reference copy; the generator is `security/browser.py` |
 | `systemd/family-policyd.service` | Runs the screen-time daemon as root, `--interval 60` | Installed manually to `/etc/systemd/system` |
+| `systemd/family-linux-firstboot.service` | Runs the full apply once on the first boot of an installed system | Installed by the ISO |
+| `bin/family-ctl` | `family-ctl` wrapper for the installed system | Installed by the ISO to `/usr/local/sbin` |
 | `systemd/family-parent-dashboard.service` | Runs the parent web dashboard on port 8443 as root | Installed manually to `/etc/systemd/system` |
 
 ## Scripts (`scripts/`)
@@ -47,7 +49,8 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | File | Purpose |
 |------|---------|
 | `bootstrap-prototype.sh` | Launcher for every command: `install`, `dashboard`, `ctl`, `policyd`, `verify`, `test`, `autoinstall`. Sets `PYTHONPATH` to `src/`. |
-| `build-autoinstall-iso.sh` | Generates Subiquity `user-data` and prints manual ISO repack steps. It does not build an ISO. |
+| `build-autoinstall-iso.sh` | Builds the install ISO: repacks Ubuntu 24.04.5 live-server (arm64 or amd64) with the autoinstall, the Family Linux payload and the first-boot unit |
+| `build-virtualbox-vm.sh` | Builds the ISO, installs it into a VirtualBox VM headless, waits for the first-boot apply, and exports an `.ova` |
 
 ## Source package (`src/family_linux/`)
 
@@ -66,10 +69,13 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 |--------|------|-----------|
 | `__init__.py` | Package version | `__version__` |
 | `models.py` | Data model and policy rules: accounts, age tiers, time limits, web filter, app policy, security baseline. Holds the constants for DNS servers, default app lists, always-blocked commands, and the password rules (child minimum length; parent rules). Passwords are held in memory only and are excluded from `to_dict()`. | `FamilyPolicy`, `ParentAccount`, `ChildAccount`, `SecurityPolicy`, `AgeTier`, `DNSProvider`, `MIN_PASSWORD_LENGTH`, `MIN_PARENT_PASSWORD_LENGTH`, `parent_password_problems`, `DEFAULT_APPROVED_APPS`, `ALWAYS_BLOCKED_COMMANDS` |
+| `timezones.py` | Time zone names for setup: validation (IANA names only) and the host's zone as the default | `is_valid_timezone`, `detect_host_timezone` |
 | `config.py` | Load, save (atomic, `0600`), back up, and restore the policy YAML | `PolicyConfigManager` |
 | `audit/logger.py` | Append-only JSON-lines audit log with read and filter | `AuditLogger`, `AuditRecord` |
 | `installer/wizard.py` | Installer state machine and the 12 steps. Non-interactive mode builds the policy from flags. | `InstallerWizard` |
 | `provisioner/system.py` | Saves the policy first, then applies users, firewall, DNS, browsers, AppArmor, security updates, and desktop filters. Failures raise `ProvisioningError` naming the last completed step. | `SystemProvisioner.apply_policy`, `ProvisioningError` |
+| `provisioner/firstboot.py` | First-boot apply with a done marker | `run`, `MARKER_PATH` |
+| `provisioner/sha512crypt.py` | SHA-512 crypt (`$6$`) for autoinstall password hashes (no `crypt` module on Python 3.13+) | `sha512_crypt` |
 | `provisioner/autoinstall.py` | Generates Ubuntu Subiquity autoinstall `user-data` (users, packages, late commands) | `SubiquityAutoinstallGenerator` |
 | `cli/family_ctl.py` | `status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify` subcommands. `verify` reads real state for live checks on Linux. | `FamilyCtl`, `format_table` |
 | `parent_ui/server.py` | `http.server` dashboard: embedded HTML page plus JSON API (`/api/policy`, `/api/child`, `/api/web/block`, and others). Requires a token (bearer header or session cookie), checks Host and Origin, requires JSON bodies. Dependencies are injected via `make_handler()`. | `make_handler`, `run_server` |
@@ -88,7 +94,9 @@ Each manager takes a `SystemAdapter`, so the same code path runs in simulation.
 | `dns_filter.py` | systemd-resolved drop-in with family DNS servers; managed `/etc/hosts` block section | `DNSFilterManager` |
 | `browser.py` | Generates and writes Firefox and Chromium managed policies | `BrowserPolicyManager` |
 | `apparmor.py` | Writes and loads the `family-linux-child` profile | `AppArmorManager`, `CHILD_SESSION_PROFILE` |
-| `app_guard.py` | Scans `.desktop` files and writes `NoDisplay=true` overrides for unapproved apps in child home | `AppGuard` |
+| `app_guard.py` | Scans system, snap and flatpak `.desktop` files; writes marked `NoDisplay=true` overrides for unapproved apps in the child's home, and removes overrides that are no longer needed | `AppGuard`, `is_managed_override`, `MANAGED_MARKER` |
+| `desktop_refresh.py` | Re-applies child app approvals; run by `family-appguard.path` (systemd) when apt, snapd or flatpak changes desktop entries | `refresh`, `render_path_unit`, `render_service_unit`, `WATCHED_DIRS` |
+| `snap_policy.py` | Polkit rule that makes each child snap install, update or removal need the parent's password (`AUTH_ADMIN`); installs snapd if missing | `SnapInstallGate`, `render_polkit_rule`, `rule_in_place` |
 | `password_policy.py` | Managed PAM block in `/etc/pam.d/passwd`: `pam_pwquality` for the parent (14+ characters, all four classes) on every `passwd` change, with children exempted by name | `ParentPasswordRules`, `render_pam_block`, `insert_block`, `block_in_place` |
 
 ### Runtime paths
@@ -108,6 +116,8 @@ Paths are chosen at runtime. The first set is used when running as root or when 
 | DNS drop-in | `/etc/systemd/resolved.conf.d/family-linux-dns.conf` | (none) |
 | Sudoers drop-in | `/etc/sudoers.d/family-linux-admin` | (none) |
 | Parent password rules (PAM) | `/etc/pam.d/passwd` (managed block) | (none) |
+| Snap install gate (polkit) | `/etc/polkit-1/rules.d/50-family-linux-snap.rules` | (none) |
+| Menu refresh units | `/etc/systemd/system/family-appguard.path`, `family-appguard.service` | (none) |
 
 Note: `SystemAdapter` treats any non-Linux host as dry-run, so on macOS every system write is simulated and nothing is changed.
 
@@ -125,7 +135,11 @@ Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. R
 | `test_screentime.py` | Usage tracking, quota and curfew evaluation, one enforcement cycle |
 | `test_security.py` | Security managers in simulation; dry-run reaches policy and audit writers |
 | `test_dashboard.py` | Live HTTP server: token auth, cookie and redirect, Host and Origin checks, JSON and size rules, password length |
+| `test_snap_policy.py` | Polkit rule content and safety, dry-run write, AppGuard hiding unapproved snap apps and not wrapping approved ones |
 | `test_password_policy.py` | PAM block layout, child exemption by name, idempotent insertion, dry run |
+| `test_firstboot_iso.py` | Autoinstall payload and late commands, first-boot marker, gateway reload, login listing |
+| `test_sha512crypt.py` | SHA-512 crypt against glibc vectors; autoinstall hashes |
+| `test_desktop_refresh.py` | Menu refresh units and re-apply |
 | `test_secrets.py` | Passwords never serialised, never in repr, dropped from files on next save |
 | `test_provisioning.py` | Save-before-apply ordering and the `ProvisioningError` message |
 | `integration/test_linux_provisioning.py` | Real accounts, sudoers, and UFW. Root on Linux with `FAMILY_LINUX_INTEGRATION=1` only; skipped elsewhere |

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from family_linux.models import FamilyPolicy, MIN_PARENT_PASSWORD_LENGTH
+from family_linux.models import FamilyPolicy, MIN_PARENT_PASSWORD_LENGTH, WebFilterPolicy
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security.users import UserManager
 from family_linux.security.firewall import FirewallManager
@@ -17,6 +17,8 @@ from family_linux.security.dns_filter import DNSFilterManager
 from family_linux.security.browser import BrowserPolicyManager
 from family_linux.security.apparmor import AppArmorManager
 from family_linux.security.password_policy import ParentPasswordRules
+from family_linux.security.snap_policy import SnapInstallGate
+from family_linux.security.desktop_refresh import PATH_UNIT_NAME, WATCHED_DIRS, PATH_UNIT_PATH, SERVICE_UNIT_PATH, render_path_unit, render_service_unit
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.desktop_lockdown import DesktopLockdown
 from family_linux.security.web_gateway import WebGateway
@@ -48,6 +50,7 @@ class SystemProvisioner:
         self.browser = BrowserPolicyManager(self.adapter)
         self.apparmor = AppArmorManager(self.adapter)
         self.parent_password_rules = ParentPasswordRules(self.adapter)
+        self.snap_gate = SnapInstallGate(self.adapter)
         self.app_guard = AppGuard(self.adapter, self.audit)
         self.web_gateway = WebGateway(self.adapter)
 
@@ -89,8 +92,28 @@ class SystemProvisioner:
 
         return results
 
+    def _install_menu_refresh_units(self, results: Dict[str, Any]) -> None:
+        for directory in WATCHED_DIRS:
+            self.adapter.run_command(["mkdir", "-p", str(directory)])
+        self.adapter.write_system_file(SERVICE_UNIT_PATH, render_service_unit(), mode=0o644)
+        self.adapter.write_system_file(PATH_UNIT_PATH, render_path_unit(), mode=0o644)
+        self.adapter.run_command(["systemctl", "daemon-reload"])
+        enabled = self.adapter.run_command(["systemctl", "enable", "--now", PATH_UNIT_NAME])
+        if enabled.returncode == 0:
+            results["actions"].append("Child app menus refresh when apps are installed or removed")
+        else:
+            results["warnings"].append(f"{PATH_UNIT_NAME} could not be enabled; new apps stay visible until the next apply")
+
     def _apply_system_layers(self, policy: FamilyPolicy, results: Dict[str, Any]) -> None:
         """Applies each system layer in order, appending to results."""
+        # Time zone first: curfews and bedtimes are evaluated in local time.
+        if policy.timezone:
+            tz = self.adapter.run_command(["timedatectl", "set-timezone", policy.timezone])
+            if tz.returncode == 0:
+                results["actions"].append(f"Time zone set to {policy.timezone}")
+            else:
+                results["warnings"].append(f"Could not set the time zone to {policy.timezone}; curfews use the system's current time zone")
+
         # Setup user privilege boundaries
         self.users.setup_security_groups()
         results["actions"].append("Security groups configured (family-parent, family-children)")
@@ -103,6 +126,11 @@ class SystemProvisioner:
         for warning in self.parent_password_rules.apply([child.username for child in policy.children]):
             results["warnings"].append(warning)
         results["actions"].append(f"Parent password rules ({MIN_PARENT_PASSWORD_LENGTH}+ chars, mixed classes) enforced on password changes")
+
+        # Snap store: snapd installed; every child install, update or removal needs the parent's password
+        for warning in self.snap_gate.apply([child.username for child in policy.children]):
+            results["warnings"].append(warning)
+        results["actions"].append("Snap installs for child accounts require the parent's password on every attempt")
 
         # Provision children
         for child in policy.children:
@@ -128,11 +156,11 @@ class SystemProvisioner:
             results["warnings"].append(warning)
         results["actions"].append(f"Per-child web filter applied to {len(policy.children)} child account(s)")
 
-        # 5. Apply Managed Browser policies (security settings only; URL rules are per child above)
-        if policy.children:
-            ref_child = policy.children[0]
-            self.browser.apply_browser_policies(ref_child.web_filter)
-            results["actions"].append("Managed browser security policies deployed for Firefox & Chromium")
+        # 5. Apply Managed Browser policies (security settings only; URL rules are per child above).
+        # Written even with no children, so the browsers are configured before the first account exists.
+        ref_web_filter = policy.children[0].web_filter if policy.children else WebFilterPolicy()
+        self.browser.apply_browser_policies(ref_web_filter)
+        results["actions"].append("Managed browser security policies deployed for Firefox & Chromium")
 
         # 6. Apply AppArmor profile. Always write it so it is ready once AppArmor is active.
         self.apparmor.install_profile()
@@ -167,4 +195,6 @@ class SystemProvisioner:
             results["actions"].append(
                 f"Child desktop menu filtered for '{child.username}' ({hidden} apps hidden, {confined} confined)"
             )
+        # Keep menus in step with installs and removals between full applies
+        self._install_menu_refresh_units(results)
 

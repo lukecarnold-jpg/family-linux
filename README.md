@@ -33,6 +33,30 @@ Current protections in the prototype:
 - Saving the policy happens before system changes, so a failed apply can be re-run to finish.
 - `family-ctl verify` reports real system state on Linux and says so when a check cannot run.
 
+## System requirements
+
+These are the configurations the project has actually been run on. Lower limits have not been measured.
+
+**Machine that runs Family Linux (the installed system):**
+
+| Item | Used and tested | Build default |
+|------|-----------------|---------------|
+| Ubuntu | 24.04.5 LTS, desktop (`ubuntu-desktop-minimal`, installed by the ISO) | same |
+| Architecture | arm64 (tested end to end in VirtualBox 7.2.20) or amd64 (CI on x86_64 runners; the amd64 ISO and appliance have not been run end to end) | arm64 on Apple silicon, amd64 elsewhere |
+| Firmware | UEFI | UEFI |
+| Memory | 4 GB | 4096 MB |
+| CPU | 4 vCPUs in tests | 2 vCPUs (`CPUS`) |
+| Disk | 40 GB virtual disk; about 10 GB used after install, plus a swap file created by the installer | 40960 MB (`DISK_MB`) |
+| Network | required during install (packages are downloaded) | DHCP |
+
+**Machine that builds the ISO and appliance:**
+
+- macOS on Apple silicon or Linux. The arm64 appliance was built on an Apple M4 Mac.
+- About 12 GB free: the Ubuntu image (3.8 GB), the built ISO (3.6 GB), and the appliance (4.2 GB), plus the VM disk.
+- `xorriso`, `curl`, `rsync`, Python 3.9 or later with PyYAML, and for the appliance VirtualBox 7.2 or later (`VBoxManage`).
+
+**Running the tests or the CLI only:** Python 3.9 or later (`requires-python` in `pyproject.toml`). CI runs Python 3.9 to 3.13 on Ubuntu and macOS.
+
 ## Quick start
 
 Requires Python 3.9 or newer.
@@ -46,6 +70,28 @@ python3 -m pip install -e ".[dev]"      # pyyaml, pytest, pytest-cov
 ```
 
 Outside Linux, every system change is simulated, so these commands are safe on a development machine. On Linux, `install` without `--dry-run` changes the system after you confirm the summary, so run `--dry-run` first.
+
+### Building the install ISO (arm64 or amd64)
+
+`scripts/build-autoinstall-iso.sh` repacks the official Ubuntu 24.04.5 live-server ISO with an unattended installer, the Family Linux source and policy, and a first-boot step that applies the full policy. It picks arm64 on Apple silicon and amd64 elsewhere; set `ARCH` to override.
+
+```bash
+brew install xorriso                      # or: apt install xorriso
+PARENT_PASS='Correct-Horse-42-Battery' ./scripts/build-autoinstall-iso.sh
+# -> dist/family-linux-ubuntu-24.04-arm64.iso (or -amd64.iso)
+```
+
+The installed system uses the time zone of the computer that builds the ISO; set `TIMEZONE` (for example `TIMEZONE=Australia/Sydney`) to choose another. Bedtimes and curfews use local time. The image is downloaded to `build/` and checked against Ubuntu's `SHA256SUMS`. The parent password must meet the parent rules. Only its hash is written to the ISO.
+
+**VirtualBox appliance (.ova):** `scripts/build-virtualbox-vm.sh` builds the ISO, installs it into a new VirtualBox VM without any prompts, waits for the first-boot apply, and exports an appliance. It needs VirtualBox 7.2 or later; on an Apple silicon Mac it builds an arm64 VM.
+
+```bash
+PARENT_PASS='your-own-14+-char-Password!' CHILD_SPECS='kid:Kid:pre_teen:child-password' \
+  ./scripts/build-virtualbox-vm.sh
+# -> dist/family-linux-ubuntu-24.04-arm64.ova   (import: File > Import Appliance)
+```
+
+The appliance contains the parent password you build it with, so use your own and do not share an appliance built with a password other people know.
 
 ### Dashboard sign-in
 
@@ -63,7 +109,7 @@ Open it in a browser on the same machine. It sets a session cookie and redirects
 |---------|--------------|
 | `help` (default) | Shows usage |
 | `install [--dry-run]` | Runs the 12-step interactive installer |
-| `install --dry-run --non-interactive --parent-pass PASS [--child user:Name:tier:PASS]…` | Unattended run; `--parent-pass` is required (min 14 characters, with upper-case, lower-case, a number and a special character) |
+| `install --dry-run --non-interactive --parent-pass PASS [--child user:Name:tier:PASS]… [--timezone Area/City]` | Unattended run; `--parent-pass` is required (min 14 characters, with upper-case, lower-case, a number and a special character) |
 | `dashboard [port]` | Starts the parent web dashboard on `127.0.0.1` (default port 8443) |
 | `ctl <args>` | Runs the `family-ctl` parent CLI (`status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify`) |
 | `policyd [--one-shot]` | Runs the screen-time and curfew enforcement daemon |
@@ -81,6 +127,8 @@ Policy checks run everywhere. Live checks run only on Linux and read the real sy
 - AppArmor child profile loaded in enforce mode (asked of the kernel)
 - unattended security upgrades enabled
 - parent password rules enforced by PAM on password changes
+- snap installs by a child need the parent's password on every attempt (polkit rule; snapd installed)
+- child menus follow app approval: approved apps are shown, other system-wide apps are hidden, and the parent's home is private (0700)
 
 On any other host, the live checks are reported as `[SKIP]` and the result is `[INCOMPLETE]`, never `[SUCCESS]`. A missing tool is a `[FAIL]` with the reason.
 

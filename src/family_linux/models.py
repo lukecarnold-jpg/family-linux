@@ -14,6 +14,8 @@ from typing import Any, Dict, List, Optional
 import re
 import string
 
+from family_linux.timezones import is_valid_timezone
+
 MIN_PASSWORD_LENGTH = 8  # child accounts
 MIN_PARENT_PASSWORD_LENGTH = 14
 
@@ -294,9 +296,13 @@ class FamilyPolicy:
     version: str = "1.0"
     audit_logging: bool = True
     recovery_mode: bool = True
+    # IANA name, e.g. "Australia/Sydney". Curfews use local time; None leaves the system setting alone.
+    timezone: Optional[str] = None
 
     def validate(self) -> List[str]:
         errors = []
+        if self.timezone is not None and not is_valid_timezone(self.timezone):
+            errors.append(f"Unknown time zone '{self.timezone}': use a name such as 'Australia/Sydney' or 'UTC'.")
         if not self.parent:
             errors.append("Architecture constraint: exactly one parent account is required.")
         else:
@@ -402,4 +408,5 @@ class FamilyPolicy:
             version=data.get("version", "1.0"),
             audit_logging=data.get("audit_logging", True),
             recovery_mode=data.get("recovery_mode", True),
+            timezone=data.get("timezone"),
         )

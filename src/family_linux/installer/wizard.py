@@ -1,7 +1,7 @@
 """Interactive installer for Family Linux.
 
 Implements the 12-step installation flow specified in docs/installer.md:
-1. Welcome and language selection
+1. Welcome, language and time zone selection
 2. Keyboard layout selection
 3. Network check
 4. Target disk/system selection
@@ -34,6 +34,7 @@ from family_linux.models import (
     MIN_PARENT_PASSWORD_LENGTH,
     parent_password_problems,
 )
+from family_linux.timezones import detect_host_timezone, is_valid_timezone
 from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
 from family_linux.provisioner.autoinstall import SubiquityAutoinstallGenerator
 from family_linux.security.adapter import SystemAdapter
@@ -53,6 +54,7 @@ class InstallerWizard:
         self.language = "en_US.UTF-8"
         self.keyboard = "us"
         self.target_disk = "/dev/sda"
+        self.timezone = detect_host_timezone()
         self.dns_provider = DNSProvider.CLEANBROWSING_FAMILY.value
 
         self.parent: Optional[ParentAccount] = None
@@ -108,6 +110,7 @@ class InstallerWizard:
 
         languages = ["en_US.UTF-8", "en_GB.UTF-8", "es_ES.UTF-8", "fr_FR.UTF-8", "de_DE.UTF-8"]
         self.language = self.prompt_choice("Step 1: Choose system language", languages, "en_US.UTF-8")
+        self.run_step_1_timezone()
 
         mode_choice = self.prompt_choice(
             "Select Installation Mode",
@@ -118,6 +121,16 @@ class InstallerWizard:
             "Recommended (Safe defaults, guided setup, minimal questions)",
         )
         self.mode = "recommended" if "Recommended" in mode_choice else "advanced"
+
+    def run_step_1_timezone(self) -> None:
+        """Time zone, part of step 1. Bedtimes and curfews are checked in local time."""
+        print("\nTime zone: bedtimes and curfews use the computer's local time.")
+        while True:
+            answer = self.prompt("Time zone (for example Australia/Sydney, Europe/London, America/New_York)", self.timezone)
+            if is_valid_timezone(answer):
+                self.timezone = answer
+                return
+            print(f"Unknown time zone '{answer}'. Use a name such as Australia/Sydney or UTC.")
 
     def run_step_2_keyboard(self) -> None:
         keyboards = ["us", "uk", "ca", "de", "fr", "es"]
@@ -236,6 +249,7 @@ class InstallerWizard:
             parent=self.parent,
             children=self.children,
             security=self.security,
+            timezone=self.timezone,
         )
 
         errors = policy.validate()
@@ -252,6 +266,7 @@ class InstallerWizard:
         print(f"Mode:             {self.mode.upper()}")
         print(f"Language:         {self.language}")
         print(f"Keyboard:         {self.keyboard}")
+        print(f"Time Zone:        {policy.timezone}")
         print(f"Target Disk:      {self.target_disk}")
         print(f"Parent Admin:     {policy.parent.username} ({policy.parent.full_name}) [sudo=YES]")
         print(f"Child Accounts:   {len(policy.children)}")
@@ -330,17 +345,23 @@ def main() -> None:
     parser.add_argument("--non-interactive", action="store_true", help="Run unattended with defaults")
     parser.add_argument("--language", type=str, default="en_US.UTF-8", help="System locale (used for autoinstall export)")
     parser.add_argument("--keyboard", type=str, default="us", help="Keyboard layout (used for autoinstall export)")
+    parser.add_argument("--timezone", type=str, default=None, help="Time zone, e.g. Australia/Sydney (default: this computer's time zone). Curfews use local time.")
     parser.add_argument("--target-disk", type=str, default=None, help="Target disk path, e.g. /dev/nvme0n1 (default: first disk the installer finds)")
     parser.add_argument("--parent-user", type=str, default="parent", help="Parent username")
     parser.add_argument("--parent-name", type=str, default="Family Administrator", help="Parent full name")
     parser.add_argument("--parent-pass", type=str, default=None, help=f"Parent password (required with --non-interactive; at least {MIN_PARENT_PASSWORD_LENGTH} characters with upper-case, lower-case, a number and a special character)")
     parser.add_argument("--child", action="append", help="Child account specification (format: username:fullname:tier:password, password required)")
     parser.add_argument("--export-autoinstall", type=str, help="Export Ubuntu Subiquity autoinstall user-data YAML to file and exit")
+    parser.add_argument("--export-policy", type=str, help="With --export-autoinstall: also write the policy file (no passwords) for first-boot provisioning")
     args = parser.parse_args()
 
     wizard = InstallerWizard(dry_run=args.dry_run, interactive=not args.non_interactive)
     wizard.language = args.language
     wizard.keyboard = args.keyboard
+    if args.timezone is not None:
+        if not is_valid_timezone(args.timezone):
+            sys.exit(f"Error: unknown time zone '{args.timezone}'. Use a name such as Australia/Sydney or UTC.")
+        wizard.timezone = args.timezone
     if args.target_disk:
         wizard.target_disk = args.target_disk
 
@@ -380,6 +401,10 @@ def main() -> None:
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(content)
             print(f"Exported Ubuntu Subiquity autoinstall configuration to {out_path}")
+            if args.export_policy:
+                from family_linux.config import PolicyConfigManager
+                saved = PolicyConfigManager(Path(args.export_policy)).save_policy(policy, reason="ISO build")
+                print(f"Exported policy (no passwords) to {saved}")
             sys.exit(0)
 
         wizard.run_step_10_summary_and_confirmation(policy)
