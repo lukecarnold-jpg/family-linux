@@ -144,6 +144,9 @@ def test_the_app_is_installed_and_never_shown_to_children():
     text = SubiquityAutoinstallGenerator(FamilyPolicy(parent=ParentAccount("parent", "P", password="Correct-Horse-42-Battery"))).generate_user_data(locale="en_US.UTF-8", keyboard_layout="us")
     auto = yaml.safe_load(text.split("\n", 1)[1])["autoinstall"]
     assert {"python3-gi", "gir1.2-gtk-4.0", "gir1.2-adw-1"} <= set(auto["packages"])
+    # App Centre from apt. Firefox is a snap, installed by the first-boot apply (not the apt list).
+    assert {"gnome-software", "gnome-software-plugin-snap"} <= set(auto["packages"])
+    assert "firefox" not in auto["packages"]
     commands = "\n".join(auto["late-commands"])
     for target in ("/usr/local/bin/family-linux-parent", "/usr/share/applications/org.familylinux.Parent.desktop",
                    "/usr/share/polkit-1/actions/org.familylinux.manage.policy"):
@@ -155,7 +158,15 @@ def test_the_app_is_installed_and_never_shown_to_children():
     assert not AppGuard(SystemAdapter(dry_run=True)).is_app_allowed(child, "org.familylinux.Parent.desktop")
 
 
-@pytest.mark.parametrize("desktop_id", ["org.gnome.Terminal", "org.gnome.Settings", "org.gnome.Software", "snap-store_snap-store"])
+def test_app_centre_is_visible_to_children_and_approved_by_default():
+    from family_linux.models import ALWAYS_BLOCKED_COMMANDS, DEFAULT_APPROVED_APPS, AgeTier
+
+    assert "org.gnome.Software" not in ALWAYS_BLOCKED_COMMANDS
+    for tier in AgeTier:
+        assert "org.gnome.Software" in DEFAULT_APPROVED_APPS[tier.value]
+
+
+@pytest.mark.parametrize("desktop_id", ["org.gnome.Terminal", "org.gnome.Settings", "snap-store_snap-store"])
 def test_ubuntu_system_tools_cannot_be_approved_for_a_child(desktop_id):
     # The always-blocked list held command names; Ubuntu 24.04 menus use these desktop IDs.
     from family_linux.models import ChildAccount

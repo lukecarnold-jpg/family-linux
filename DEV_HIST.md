@@ -491,6 +491,20 @@ Evidence:
 - Seen in the same session: Ubuntu's release-upgrade notice ("Ubuntu 26.04.1 LTS Upgrade Available") opens in the parent's session, and would in a child's session too. Fixed: the apply now sets `Prompt=never` in `/etc/update-manager/release-upgrades` (keeping the file's comments), and `family-ctl verify` checks it. Security updates are unaffected (unattended-upgrades). The parent can still upgrade on purpose after setting it back to `lts`.
 - The backend ran against the real `family-ctl` in the container (without pkexec): state read, block, allow, remove, screen time, add child, disable; each change appeared in the next state, and the child's password did not.
 
+## Session 19: Browser and App Centre missing from the installed system
+
+Found by the user in the rebuilt OVA: no App Centre to download apps, and no web browser.
+
+- Browser: `firefox` was an apt package in the autoinstall. On Ubuntu 24.04 that package only installs the Firefox snap, and that step fails inside the installer, so no browser was installed. Firefox is now installed by the first-boot apply (`snap install firefox`, skipped if present). An autoinstall `snaps:` entry was tried first and did nothing: the installed system had no snaps at all. Children's default approved apps already name Firefox, so it is visible once installed.
+- App Centre: `gnome-software` and `gnome-software-plugin-snap` are installed. It was also on the always-blocked list, so children could not see it. It is now allowed and approved by default for every age tier. Children still cannot install silently: snap installs need the parent's authorisation through polkit, and apt installs need an administrator.
+- Test change: `test_app_centre_is_visible_to_children_and_approved_by_default` replaces the Session 18 assertion that the App Centre could not be approved.
+
+Evidence:
+- Unit tests: 219 passed, 5 skipped.
+- Rebuilt arm64 `.ova`, imported into VirtualBox and signed in as the parent: `snap list firefox` shows Firefox 157 (revision 9035, latest/stable); `/usr/share/applications/org.gnome.Software.desktop` exists; `sudo family-ctl verify` reports all baseline checks passed; Firefox shows in the dock.
+- The first attempt, an autoinstall `snaps:` entry, left no snaps on the installed system (see above), which is why Firefox moved to the first-boot apply.
+- Not yet checked: the amd64 ISO through a full install.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

@@ -186,6 +186,16 @@ class SystemProvisioner:
         disable_release_upgrade_prompt(self.adapter)
         results["actions"].append("New-release upgrade notice turned off (security updates continue)")
 
+        # 6b3. The web browser. On Ubuntu 24.04 Firefox is a snap, and the apt package only installs it.
+        # Done here, not in the installer: the installer does not seed snaps, and snapd needs the
+        # network and a running daemon, which the first boot has.
+        if self.adapter.run_command(["snap", "list", "firefox"]).returncode != 0:
+            install = self.adapter.run_command(["snap", "install", "firefox"])
+            if install.returncode == 0:
+                results["actions"].append("Firefox installed (snap)")
+            else:
+                results["warnings"].append("Could not install Firefox (snap); children have no browser until it is installed")
+
         # 6c. Lock the desktop entry points that AppArmor cannot confine (terminal shortcut, Alt+F2)
         if policy.children:
             for warning in DesktopLockdown(self.adapter).apply():

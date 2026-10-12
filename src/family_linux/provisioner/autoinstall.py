@@ -60,7 +60,6 @@ class SubiquityAutoinstallGenerator:
             "apparmor",
             "apparmor-utils",
             "unattended-upgrades",
-            "firefox",
             "tuxpaint",
             "libreoffice",
             "vlc",
@@ -69,6 +68,10 @@ class SubiquityAutoinstallGenerator:
             "python3-yaml",
             # The live-server image has no desktop. Child accounts need a session and a menu.
             "ubuntu-desktop-minimal",
+            # The App Centre (gnome-software) with its snap plugin. Children can browse it; installs
+            # need the parent's approval through polkit (see config/polkit).
+            "gnome-software",
+            "gnome-software-plugin-snap",
             # Family Controls, the parent's GNOME app (GTK 4 and libadwaita).
             "python3-gi",
             "gir1.2-gtk-4.0",

@@ -70,6 +70,7 @@ DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
         "gcompris-qt",
         "scratch3",
         "org.gnome.Calculator",
+        "org.gnome.Software",
         "firefox",
         "vlc",
     ],
@@ -79,6 +80,7 @@ DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
         "scratch3",
         "libreoffice",
         "org.gnome.Calculator",
+        "org.gnome.Software",
         "firefox",
         "chromium",
         "vlc",
@@ -88,6 +90,7 @@ DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
         "scratch3",
         "libreoffice",
         "org.gnome.Calculator",
+        "org.gnome.Software",
         "firefox",
         "chromium",
         "vlc",
@@ -100,6 +103,7 @@ DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
         "firefox",
         "libreoffice",
         "org.gnome.Calculator",
+        "org.gnome.Software",
         "vlc",
     ],
 }
@@ -134,7 +138,6 @@ ALWAYS_BLOCKED_COMMANDS: List[str] = [
     "snap",
     "flatpak",
     "synaptic",
-    "gnome-software",
     "system-settings",
     "gnome-control-center",
     "org.familylinux.parent",  # the parent's Family Controls app
@@ -143,7 +146,6 @@ ALWAYS_BLOCKED_COMMANDS: List[str] = [
     "org.gnome.console",
     "org.gnome.ptyxis",
     "org.gnome.settings",
-    "org.gnome.software",
     "snap-store_snap-store",
     "snap-store_ubuntu-software",
 ]
