@@ -35,24 +35,24 @@ Current protections in the prototype:
 
 ## System requirements
 
-These are the configurations the project has actually been run on. Lower limits have not been measured.
-
 **Machine that runs Family Linux (the installed system):**
 
-| Item | Used and tested | Build default |
-|------|-----------------|---------------|
-| Ubuntu | 24.04.5 LTS, desktop (`ubuntu-desktop-minimal`, installed by the ISO) | same |
-| Architecture | arm64 (tested end to end in VirtualBox 7.2.20) or amd64 (CI on x86_64 runners; the amd64 ISO and appliance have not been run end to end) | arm64 on Apple silicon, amd64 elsewhere |
-| Firmware | UEFI | UEFI |
-| Memory | 4 GB | 4096 MB |
-| CPU | 4 vCPUs in tests | 2 vCPUs (`CPUS`) |
-| Disk | 40 GB virtual disk; about 10 GB used after install, plus a swap file created by the installer | 40960 MB (`DISK_MB`) |
-| Network | required during install (packages are downloaded) | DHCP |
+| Item | Minimum | Recommended | Tested |
+|------|---------|-------------|--------|
+| Ubuntu | 24.04 LTS desktop (`ubuntu-desktop-minimal`, installed by the ISO) | 24.04.5 LTS | 24.04.5 LTS |
+| Architecture | amd64 or arm64 | arm64 on Apple silicon; amd64 on Intel or AMD PCs | arm64 end to end in VirtualBox 7.2.20. amd64 runs in CI; the amd64 ISO has not been installed end to end |
+| Firmware | UEFI | UEFI | UEFI |
+| Memory | 4 GB (Ubuntu's desktop minimum; not measured with Family Linux) | 8 GB for smooth use with several apps open | 4 GB (`MEMORY_MB` 4096) |
+| CPU | 2 cores (Ubuntu's desktop minimum; not measured) | 4 cores | 4 vCPUs |
+| Disk | 25 GB (Ubuntu's desktop minimum; not measured with Family Linux) | 64 GB or more, for updates and apps | 40 GB virtual disk; about 10 GB used after install |
+| Network | Needed during install (packages are downloaded) and for the first boot | Always connected, for security updates | DHCP |
+
+The minimums come from Ubuntu's published desktop requirements. Family Linux has only been measured at the tested values, so treat anything below them as untested.
 
 **Machine that builds the ISO and appliance:**
 
 - macOS on Apple silicon or Linux. The arm64 appliance was built on an Apple M4 Mac.
-- About 12 GB free: the Ubuntu image (3.8 GB), the built ISO (3.6 GB), and the appliance (4.2 GB), plus the VM disk.
+- About 12 GB free: the Ubuntu image (3.8 GB), the built ISO (3.6 GB), and the appliance (5.0 GB), plus the VM disk.
 - `xorriso`, `curl`, `rsync`, Python 3.9 or later with PyYAML, and for the appliance VirtualBox 7.2 or later (`VBoxManage`).
 
 **Running the tests or the CLI only:** Python 3.9 or later (`requires-python` in `pyproject.toml`). CI runs Python 3.9 to 3.13 on Ubuntu and macOS.
