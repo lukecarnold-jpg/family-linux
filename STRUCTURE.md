@@ -41,6 +41,9 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | `firefox/policies.json` | Managed Firefox policy template | Reference copy; the generator is `security/browser.py` |
 | `systemd/family-policyd.service` | Runs the screen-time daemon as root, `--interval 60` | Installed manually to `/etc/systemd/system` |
 | `systemd/family-linux-firstboot.service` | Runs the full apply once on the first boot of an installed system | Installed by the ISO |
+| `bin/family-linux-parent` | Launcher for the Family Controls app | Installed by the ISO to `/usr/local/bin` |
+| `applications/org.familylinux.Parent.desktop` | GNOME menu entry for Family Controls | Installed by the ISO; hidden for children |
+| `polkit/org.familylinux.manage.policy` | polkit action for `pkexec family-ctl` (administrators, password remembered briefly) | Installed by the ISO |
 | `bin/family-ctl` | `family-ctl` wrapper for the installed system | Installed by the ISO to `/usr/local/sbin` |
 | `systemd/family-parent-dashboard.service` | Runs the parent web dashboard on port 8443 as root | Installed manually to `/etc/systemd/system` |
 
@@ -78,6 +81,8 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | `provisioner/sha512crypt.py` | SHA-512 crypt (`$6$`) for autoinstall password hashes (no `crypt` module on Python 3.13+) | `sha512_crypt` |
 | `provisioner/autoinstall.py` | Generates Ubuntu Subiquity autoinstall `user-data` (users, packages, late commands) | `SubiquityAutoinstallGenerator` |
 | `cli/family_ctl.py` | `status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify` subcommands. `verify` reads real state for live checks on Linux. | `FamilyCtl`, `format_table` |
+| `gnome_app/app.py` | Family Controls, the parent's GNOME app (GTK 4, libadwaita 1.5): children, screen time, websites, apps, website requests, add child | `FamilyControlsApp`, `FamilyControlsWindow`, `AddChildDialog` |
+| `gnome_app/backend.py` | Runs `pkexec family-ctl ...` for the app; input checks; demo client | `FamilyCtlClient`, `DemoClient`, `make_client` |
 | `parent_ui/server.py` | `http.server` dashboard: embedded HTML page plus JSON API (`/api/policy`, `/api/child`, `/api/web/block`, and others). Requires a token (bearer header or session cookie), checks Host and Origin, requires JSON bodies. Dependencies are injected via `make_handler()`. | `make_handler`, `run_server` |
 | `screentime/tracker.py` | Per-day usage minutes in JSON; evaluates quota and curfew | `ScreenTimeTracker` |
 | `screentime/daemon.py` | Polls logged-in users, sends warnings, terminates sessions at limit or curfew | `ScreenTimeDaemon` |
@@ -140,6 +145,7 @@ Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. R
 | `test_firstboot_iso.py` | Autoinstall payload and late commands, first-boot marker, gateway reload, login listing |
 | `test_sha512crypt.py` | SHA-512 crypt against glibc vectors; autoinstall hashes |
 | `test_desktop_refresh.py` | Menu refresh units and re-apply |
+| `test_gnome_app_backend.py` | Family Controls backend (pkexec calls, password on stdin, errors), `state`/`web remove`/`--password-stdin`, install steps, system tools never approvable |
 | `test_secrets.py` | Passwords never serialised, never in repr, dropped from files on next save |
 | `test_provisioning.py` | Save-before-apply ordering and the `ProvisioningError` message |
 | `integration/test_linux_provisioning.py` | Real accounts, sudoers, and UFW. Root on Linux with `FAMILY_LINUX_INTEGRATION=1` only; skipped elsewhere |

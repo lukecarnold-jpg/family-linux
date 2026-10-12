@@ -69,6 +69,10 @@ class SubiquityAutoinstallGenerator:
             "python3-yaml",
             # The live-server image has no desktop. Child accounts need a session and a menu.
             "ubuntu-desktop-minimal",
+            # Family Controls, the parent's GNOME app (GTK 4 and libadwaita).
+            "python3-gi",
+            "gir1.2-gtk-4.0",
+            "gir1.2-adw-1",
         ]
 
         # Late commands to configure family linux hardening
@@ -100,6 +104,10 @@ class SubiquityAutoinstallGenerator:
             # Every service and command imports family_linux from /opt, not only the first-boot unit.
             "sh -c 'echo /opt/family-linux/src > /target/usr/lib/python3/dist-packages/family-linux.pth'",
             f"install -m 755 {ISO_PAYLOAD_DIR}/family-ctl /target/usr/local/sbin/family-ctl",
+            # Family Controls app: launcher, menu entry, and the polkit action it runs family-ctl under
+            f"install -m 755 {ISO_PAYLOAD_DIR}/family-linux-parent /target/usr/local/bin/family-linux-parent",
+            f"install -m 644 {ISO_PAYLOAD_DIR}/org.familylinux.Parent.desktop /target/usr/share/applications/org.familylinux.Parent.desktop",
+            f"install -m 644 {ISO_PAYLOAD_DIR}/org.familylinux.manage.policy /target/usr/share/polkit-1/actions/org.familylinux.manage.policy",
         ]
 
         # The installed desktop uses NetworkManager, as Ubuntu Desktop does. Not set in the installer's

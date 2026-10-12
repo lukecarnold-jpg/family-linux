@@ -137,6 +137,15 @@ ALWAYS_BLOCKED_COMMANDS: List[str] = [
     "gnome-software",
     "system-settings",
     "gnome-control-center",
+    "org.familylinux.parent",  # the parent's Family Controls app
+    # Desktop entry IDs on Ubuntu 24.04 (the names above are commands; menus use these IDs)
+    "org.gnome.terminal",
+    "org.gnome.console",
+    "org.gnome.ptyxis",
+    "org.gnome.settings",
+    "org.gnome.software",
+    "snap-store_snap-store",
+    "snap-store_ubuntu-software",
 ]
 
 

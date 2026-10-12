@@ -474,6 +474,23 @@ Found in the Session 16 review: nothing set the time zone, so installed systems 
 
 Tests: `tests/test_timezone.py` (validation, host detection, policy round trip, autoinstall, apply, unattended and interactive installer). An unattended export on this Mac wrote `timezone: Australia/Melbourne` to both the autoinstall and the policy. Not yet run in a VirtualBox install.
 
+## Session 18: Family Controls, the parent's GNOME app
+
+Request from the user: build in the GNOME GUI. Read as a native GNOME app for the parent (GTK 4 and libadwaita), as the desktop counterpart of the CLI and web dashboard.
+
+- `gnome_app/app.py`: sidebar with website requests and each child; a page per child (account, screen time, websites, apps); add-child dialog; confirmations for removal. Changes run in a background thread so the polkit prompt does not freeze the window.
+- `gnome_app/backend.py`: every call is `pkexec /usr/local/sbin/family-ctl ...`. A new polkit action (`org.familylinux.manage`, `auth_admin_keep`) covers it. The app never runs as root and adds no privileged code of its own.
+- New CLI pieces it needs: `family-ctl state` (JSON: policy without passwords, website requests, today's usage, installed apps), `user add --password-stdin` (keeps the password out of the process list), `web remove`.
+- Installed by the ISO: GTK/libadwaita packages, the launcher, the menu entry, and the polkit action. The app's desktop ID is always blocked for children.
+- Found while building it: the always-blocked list held command names (`gnome-terminal`), but Ubuntu 24.04 menus use desktop IDs (`org.gnome.Terminal`, `org.gnome.Settings`, `org.gnome.Software`, `snap-store_snap-store`). A parent could approve Terminal or Settings for a child. Those IDs are now always blocked.
+
+Evidence:
+- Unit tests: `tests/test_gnome_app_backend.py`. 218 passed, 5 skipped.
+- The interface ran in an Ubuntu 24.04 container (GTK 4.14, libadwaita 1.5, the versions an installed system has) under a virtual display with demo data: requests page, child page with all sections expanded, and the add-child dialog rendered without errors.
+- Installed system (the rebuilt arm64 `.ova`, imported into VirtualBox): the parent signed in; GNOME's app search found Family Controls; launching it showed the polkit prompt ("Authentication is required to view or change Family Linux settings", for Family Administrator); after the password, the app showed the real child. Turning "Can sign in" off ran `pkexec family-ctl user disable kid` without a second prompt (the password is remembered), showed "Child account 'kid' disabled.", and the sidebar updated; turning it back on worked the same way. The desktop clock showed local time, confirming the time zone from Session 17.
+- Seen in the same session: Ubuntu's release-upgrade notice ("Ubuntu 26.04.1 LTS Upgrade Available") opens in the parent's session, and would in a child's session too. Fixed: the apply now sets `Prompt=never` in `/etc/update-manager/release-upgrades` (keeping the file's comments), and `family-ctl verify` checks it. Security updates are unaffected (unattended-upgrades). The parent can still upgrade on purpose after setting it back to `lts`.
+- The backend ran against the real `family-ctl` in the container (without pkexec): state read, block, allow, remove, screen time, add child, disable; each change appeared in the next state, and the child's password did not.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

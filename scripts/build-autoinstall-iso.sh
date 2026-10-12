@@ -93,6 +93,9 @@ PYTHONPATH="${PROJECT_ROOT}/src" "$PYTHON" -m family_linux.installer.wizard \
 cp "${BUILD_DIR}/export/policy.yaml" "$PAYLOAD/family-linux/policy.yaml"
 cp "${PROJECT_ROOT}/config/systemd/family-linux-firstboot.service" "$PAYLOAD/family-linux/"
 cp "${PROJECT_ROOT}/config/bin/family-ctl" "$PAYLOAD/family-linux/family-ctl"
+cp "${PROJECT_ROOT}/config/bin/family-linux-parent" "$PAYLOAD/family-linux/family-linux-parent"
+cp "${PROJECT_ROOT}/config/applications/org.familylinux.Parent.desktop" "$PAYLOAD/family-linux/"
+cp "${PROJECT_ROOT}/config/polkit/org.familylinux.manage.policy" "$PAYLOAD/family-linux/"
 rsync -a --exclude '__pycache__' --exclude '*.egg-info' "${PROJECT_ROOT}/src/" "$PAYLOAD/family-linux/src/"
 
 # 3. Boot menu: start the autoinstall from the ISO's nocloud directory without a prompt

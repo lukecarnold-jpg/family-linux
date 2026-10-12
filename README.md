@@ -93,6 +93,19 @@ PARENT_PASS='your-own-14+-char-Password!' CHILD_SPECS='kid:Kid:pre_teen:child-pa
 
 The appliance contains the parent password you build it with, so use your own and do not share an appliance built with a password other people know.
 
+### Family Controls (GNOME app)
+
+On an installed system, the parent opens **Family Controls** from the GNOME app menu. It shows each child, with:
+
+- **Account:** sign-in on or off, remove a child, add a child (the password is sent on standard input, never on the command line).
+- **Screen time:** daily limit, bedtimes for school nights and weekends, wake time, today's usage, reset today's usage.
+- **Websites:** block or always allow a site, remove a rule, and approve or keep blocked the sites a child asked for.
+- **Apps:** a switch for each installed app. System tools (Terminal, Settings, the software store) are always hidden for children.
+
+Every change runs `family-ctl` through `pkexec`. GNOME asks for the parent's password (polkit action `org.familylinux.manage`, remembered for a few minutes), so the app never runs as root. Children cannot open it: it is hidden from their menus, and polkit requires an administrator's password. It needs GTK 4 and libadwaita (`python3-gi`, `gir1.2-gtk-4.0`, `gir1.2-adw-1`), which the ISO installs.
+
+For design work without a real system: `FAMILY_LINUX_DEMO_STATE=state.json python3 -m family_linux.gnome_app`.
+
 ### Dashboard sign-in
 
 `dashboard` prints a one-time link:
@@ -126,6 +139,7 @@ Policy checks run everywhere. Live checks run only on Linux and read the real sy
 - Firefox and Chromium managed policy files present
 - AppArmor child profile loaded in enforce mode (asked of the kernel)
 - unattended security upgrades enabled
+- the new-release upgrade notice is off (security updates continue)
 - parent password rules enforced by PAM on password changes
 - snap installs by a child need the parent's password on every attempt (polkit rule; snapd installed)
 - child menus follow app approval: approved apps are shown, other system-wide apps are hidden, and the parent's home is private (0700)
