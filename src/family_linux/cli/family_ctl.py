@@ -415,6 +415,7 @@ class FamilyCtl:
                 "Unattended security updates enabled",
                 "Parent password rules enforced by PAM",
                 "Snap installs need the parent's password (polkit rule)",
+                "System time zone matches the policy",
             ):
                 skip(name, "live check runs only on Linux")
         else:
@@ -458,6 +459,16 @@ class FamilyCtl:
                 block_in_place(pam_text),
                 f"{PAM_PASSWD_PATH}: pam_pwquality minlen={MIN_PARENT_PASSWORD_LENGTH} for parent accounts",
             )
+
+            # Curfews and bedtimes use local time, so the system must be on the family's time zone.
+            tz = _probe(["timedatectl", "show", "-p", "Timezone", "--value"])
+            system_tz = tz.stdout.strip() if tz and tz.returncode == 0 else ""
+            if not system_tz:
+                record("System time zone matches the policy", False, "timedatectl not available")
+            elif policy.timezone:
+                record("System time zone matches the policy", system_tz == policy.timezone, f"system {system_tz}, policy {policy.timezone}")
+            else:
+                record("System time zone matches the policy", True, f"no time zone in the policy; system uses {system_tz}")
 
             snap_gate = SnapInstallGate()
             record(

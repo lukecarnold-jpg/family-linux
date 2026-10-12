@@ -69,6 +69,7 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 |--------|------|-----------|
 | `__init__.py` | Package version | `__version__` |
 | `models.py` | Data model and policy rules: accounts, age tiers, time limits, web filter, app policy, security baseline. Holds the constants for DNS servers, default app lists, always-blocked commands, and the password rules (child minimum length; parent rules). Passwords are held in memory only and are excluded from `to_dict()`. | `FamilyPolicy`, `ParentAccount`, `ChildAccount`, `SecurityPolicy`, `AgeTier`, `DNSProvider`, `MIN_PASSWORD_LENGTH`, `MIN_PARENT_PASSWORD_LENGTH`, `parent_password_problems`, `DEFAULT_APPROVED_APPS`, `ALWAYS_BLOCKED_COMMANDS` |
+| `timezones.py` | Time zone names for setup: validation (IANA names only) and the host's zone as the default | `is_valid_timezone`, `detect_host_timezone` |
 | `config.py` | Load, save (atomic, `0600`), back up, and restore the policy YAML | `PolicyConfigManager` |
 | `audit/logger.py` | Append-only JSON-lines audit log with read and filter | `AuditLogger`, `AuditRecord` |
 | `installer/wizard.py` | Installer state machine and the 12 steps. Non-interactive mode builds the policy from flags. | `InstallerWizard` |

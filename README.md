@@ -57,7 +57,7 @@ PARENT_PASS='Correct-Horse-42-Battery' ./scripts/build-autoinstall-iso.sh
 # -> dist/family-linux-ubuntu-24.04-arm64.iso (or -amd64.iso)
 ```
 
-The image is downloaded to `build/` and checked against Ubuntu's `SHA256SUMS`. The parent password must meet the parent rules. Only its hash is written to the ISO.
+The installed system uses the time zone of the computer that builds the ISO; set `TIMEZONE` (for example `TIMEZONE=Australia/Sydney`) to choose another. Bedtimes and curfews use local time. The image is downloaded to `build/` and checked against Ubuntu's `SHA256SUMS`. The parent password must meet the parent rules. Only its hash is written to the ISO.
 
 **VirtualBox appliance (.ova):** `scripts/build-virtualbox-vm.sh` builds the ISO, installs it into a new VirtualBox VM without any prompts, waits for the first-boot apply, and exports an appliance. It needs VirtualBox 7.2 or later; on an Apple silicon Mac it builds an arm64 VM.
 
@@ -85,7 +85,7 @@ Open it in a browser on the same machine. It sets a session cookie and redirects
 |---------|--------------|
 | `help` (default) | Shows usage |
 | `install [--dry-run]` | Runs the 12-step interactive installer |
-| `install --dry-run --non-interactive --parent-pass PASS [--child user:Name:tier:PASS]…` | Unattended run; `--parent-pass` is required (min 14 characters, with upper-case, lower-case, a number and a special character) |
+| `install --dry-run --non-interactive --parent-pass PASS [--child user:Name:tier:PASS]… [--timezone Area/City]` | Unattended run; `--parent-pass` is required (min 14 characters, with upper-case, lower-case, a number and a special character) |
 | `dashboard [port]` | Starts the parent web dashboard on `127.0.0.1` (default port 8443) |
 | `ctl <args>` | Runs the `family-ctl` parent CLI (`status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify`) |
 | `policyd [--one-shot]` | Runs the screen-time and curfew enforcement daemon |

@@ -115,7 +115,7 @@ class UserManager:
         child_home = Path(f"/home/{child.username}")
         self.adapter.set_permissions(child_home, mode=0o700, owner=child.username, group=CHILD_GROUP)
 
-        self.allow_child_shell_on_login_screen(child.shell)
+        self.show_child_on_login_screen(child.username)
 
         if child.password:
             self.set_password(child.username, child.password)
@@ -127,17 +127,27 @@ class UserManager:
 
         return True
 
-    def allow_child_shell_on_login_screen(self, shell: str, shells_file: Path = Path("/etc/shells")) -> None:
-        """Lists the child's shell in /etc/shells.
+    def show_child_on_login_screen(
+        self, username: str, users_dir: Path = Path("/var/lib/AccountsService/users")
+    ) -> None:
+        """Marks the child as a regular account for AccountsService, so the login screen lists it.
 
-        AccountsService treats accounts whose shell is not listed as system accounts and hides them
-        from the login screen. The child shell is nologin: it still cannot run a terminal session,
-        and the desktop session starts without it (tested in VirtualBox).
+        AccountsService treats accounts with a nologin shell as system accounts and hides them, even
+        when the shell is in /etc/shells. SystemAccount=false in its per-user file overrides that
+        (tested in VirtualBox). The child shell stays nologin; the desktop session starts without it.
+        Other keys AccountsService keeps in the file (language, session, icon) are preserved.
         """
-        current = shells_file.read_text(encoding="utf-8") if shells_file.exists() else ""
-        if shell in current.split():
+        path = users_dir / username
+        lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+        if "[User]" not in lines:
+            lines = ["[User]"] + lines
+        lines = [line for line in lines if not line.startswith("SystemAccount=")]
+        lines.insert(lines.index("[User]") + 1, "SystemAccount=false")
+        content = "\n".join(lines) + "\n"
+        if path.exists() and path.read_text(encoding="utf-8") == content:
             return
-        self.adapter.write_system_file(shells_file, current.rstrip("\n") + f"\n{shell}\n", mode=0o644)
+        self.adapter.write_system_file(path, content, mode=0o600)
+        self.adapter.run_command(["systemctl", "try-restart", "accounts-daemon.service"])
 
     def disable_child(self, username: str) -> None:
         """Disables child login (locks password)."""

@@ -106,6 +106,14 @@ class SystemProvisioner:
 
     def _apply_system_layers(self, policy: FamilyPolicy, results: Dict[str, Any]) -> None:
         """Applies each system layer in order, appending to results."""
+        # Time zone first: curfews and bedtimes are evaluated in local time.
+        if policy.timezone:
+            tz = self.adapter.run_command(["timedatectl", "set-timezone", policy.timezone])
+            if tz.returncode == 0:
+                results["actions"].append(f"Time zone set to {policy.timezone}")
+            else:
+                results["warnings"].append(f"Could not set the time zone to {policy.timezone}; curfews use the system's current time zone")
+
         # Setup user privilege boundaries
         self.users.setup_security_groups()
         results["actions"].append("Security groups configured (family-parent, family-children)")

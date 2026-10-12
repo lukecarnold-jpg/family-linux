@@ -12,6 +12,7 @@ set -euo pipefail
 # Mac), amd64 elsewhere. Override with ARCH=arm64 or ARCH=amd64.
 #
 # Optional: CHILD_SPECS='kid:Kid:pre_teen:child-password' (one child per line).
+# Optional: TIMEZONE='Australia/Sydney' (default: this computer's time zone). Curfews use local time.
 # Requires: xorriso (brew install xorriso | apt install xorriso), curl, rsync, PARENT_PASS, and a
 # Python with PyYAML (PYTHON=/path/to/python to choose one; default python3).
 
@@ -80,6 +81,7 @@ PYTHONPATH="${PROJECT_ROOT}/src" "$PYTHON" -m family_linux.installer.wizard \
     --parent-name "Family Administrator" \
     --parent-pass "$PARENT_PASS" \
     ${CHILD_ARGS[@]+"${CHILD_ARGS[@]}"} \
+    ${TIMEZONE:+--timezone "$TIMEZONE"} \
     --export-autoinstall "$PAYLOAD/nocloud/user-data" \
     --export-policy "${BUILD_DIR}/export/policy.yaml"
 : > "$PAYLOAD/nocloud/meta-data"

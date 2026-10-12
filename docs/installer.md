@@ -13,7 +13,7 @@ The installer provides two paths:
 
 ## Core flow
 
-1. Welcome and language selection
+1. Welcome, language and time zone selection (time zone defaults to the computer's own; bedtimes and curfews use local time)
 2. Keyboard layout selection
 3. Network setup/check
 4. Disk and installation target choices

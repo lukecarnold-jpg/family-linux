@@ -10,7 +10,7 @@ set -euo pipefail
 # Architecture: arm64 on Apple silicon (VirtualBox 7.2 or later), amd64 elsewhere. Override with ARCH.
 #
 # Required: VirtualBox (VBoxManage), PARENT_PASS, and what scripts/build-autoinstall-iso.sh needs.
-# Optional: VM_NAME (default "Family Linux"), CHILD_SPECS, MEMORY_MB (4096), CPUS (2),
+# Optional: VM_NAME (default "Family Linux"), CHILD_SPECS, TIMEZONE, MEMORY_MB (4096), CPUS (2),
 #           DISK_MB (40960), TIMEOUT_MIN (90), SKIP_ISO=1 to reuse an existing ISO.
 #
 # The parent password in the appliance is PARENT_PASS. Build with your own; do not share an

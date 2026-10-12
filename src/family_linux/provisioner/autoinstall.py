@@ -102,8 +102,14 @@ class SubiquityAutoinstallGenerator:
             f"install -m 755 {ISO_PAYLOAD_DIR}/family-ctl /target/usr/local/sbin/family-ctl",
         ]
 
-        # NetworkManager manages the network (see "renderer" below), so do not wait for networkd.
-        late_commands.append("curtin in-target -- systemctl disable systemd-networkd-wait-online.service")
+        # The installed desktop uses NetworkManager, as Ubuntu Desktop does. Not set in the installer's
+        # own network config: the live-server installer has no NetworkManager and its network step
+        # fails. With networkd left on the installed system, every boot waited about 2 minutes.
+        late_commands += [
+            "sh -c 'rm -f /target/etc/netplan/*.yaml && printf \"network:\\n  version: 2\\n  renderer: NetworkManager\\n\" "
+            "> /target/etc/netplan/01-network-manager-all.yaml && chmod 600 /target/etc/netplan/01-network-manager-all.yaml'",
+            "curtin in-target -- systemctl disable systemd-networkd-wait-online.service",
+        ]
 
         # Child accounts are created by cloud-init on first boot ("user-data" below), so they do not
         # exist yet. Their primary group and home permissions are set by the first-boot apply.
@@ -128,12 +134,12 @@ class SubiquityAutoinstallGenerator:
                 "interactive-sections": [],
                 "locale": locale,
                 "keyboard": {"layout": keyboard_layout},
+                # Without this Ubuntu installs on UTC, and curfews would fire at the wrong local time.
+                # "geoip" asks the installer to detect it from the network.
+                "timezone": self.policy.timezone or "geoip",
                 "network": {
                     "network": {
                         "version": 2,
-                        # The desktop uses NetworkManager. With networkd as renderer, each boot waited
-                        # about 2 minutes on systemd-networkd-wait-online.
-                        "renderer": "NetworkManager",
                         "ethernets": {
                             "all-en": {"match": {"name": "en*"}, "dhcp4": True},
                             "all-wl": {"match": {"name": "wl*"}, "dhcp4": True},

@@ -437,11 +437,13 @@ Defects found by installing for real (QEMU on Apple silicon, then VirtualBox 7.2
 4. **Browser policies missing with no children.** They were written only when a child existed. Now always written.
 5. **Services could not import the package.** Only the first-boot unit had `PYTHONPATH`; `family-dnsd` restarted in a loop. A `.pth` file in `/usr/lib/python3/dist-packages` now points to `/opt/family-linux/src`.
 6. **Child web rules lost after a reboot (fail open).** The `inet family_linux` table was loaded once with `nft -f` and is not persistent. `family-dnsd` now loads it in `ExecStartPre`, so every start (and boot) restores it. If the gateway stops, the redirect stays and the child has no DNS (fail closed). CI never rebooted, so it did not catch this.
-7. **Children hidden on the login screen.** AccountsService hides accounts whose shell is not in `/etc/shells`. The child shell (`nologin`) is now listed there.
+7. **Children hidden on the login screen.** AccountsService treats accounts with a `nologin` shell as system accounts and hides them. A first fix listed `nologin` in `/etc/shells`; the imported appliance showed it had no effect, and it was removed. Provisioning now writes `SystemAccount=false` to the child's AccountsService file (other keys kept). After a reboot, the login screen listed the child.
 8. **Exported disks with empty firmware entries.** The disk now also has the removable-media boot path (`EFI/BOOT/BOOTAA64.EFI`).
 9. **First boot silently skipped.** Ordering the first-boot unit after `cloud-final.service` made a cycle (`cloud-final` runs after `multi-user.target`, which waits for the unit). systemd logged "Job family-linux-firstboot.service/start deleted to break ordering cycle" and nothing was applied. Now ordered after `cloud-init.service`, which is where the accounts are created.
 10. **Headless build could not see the first boot.** The serial console argument was before `---`, so the installed system did not keep it. It is now after `---` and last, so it is `/dev/console` on the installed system.
-11. **Every boot waited about 2 minutes** on `systemd-networkd-wait-online`, because the autoinstall used networkd while the desktop uses NetworkManager. The autoinstall now sets `renderer: NetworkManager` and disables the networkd wait. Not yet confirmed in an install.
+11. **Every boot waited about 2 minutes** on `systemd-networkd-wait-online`, because the installed system used networkd while the desktop uses NetworkManager. A late command now replaces the installed system's netplan config with `01-network-manager-all.yaml` (as Ubuntu Desktop has) and disables the networkd wait. A first attempt set `renderer: NetworkManager` in the autoinstall network config; that also applies to the live installer, which has no NetworkManager, and the install failed at its network step. Caught by the next VirtualBox build and corrected.
+
+Appliance result (all fixes built in): `scripts/build-virtualbox-vm.sh` ran end to end and exported `dist/family-linux-ubuntu-24.04-arm64.ova` (4.2 GB). Imported as a new VM: it booted in 2.6 seconds, `family-ctl verify` passed every check, and the login screen listed both the parent and the child.
 
 Reboot check (appliance VM, fixes 5-7 built in, fix 9 applied by hand): after `sudo reboot`, the `inet family_linux` table was back, `family-dnsd` was active, and the first-boot unit was skipped by its marker.
 
@@ -458,6 +460,19 @@ Limits:
 - Every import of the same appliance has the same machine ID.
 - The amd64 ISO and appliance paths have not been run.
 - The parent rule applies to `passwd`. A password change forced at login (expired password) uses the login service's stack, which does not include the parent rule.
+
+## Session 17: time zone in setup
+
+Found in the Session 16 review: nothing set the time zone, so installed systems ran on UTC (the VirtualBox VM showed 10:57 at 21:57 local time). Curfews and bedtimes are evaluated in local time, so an 8 PM curfew would have applied at the wrong hour.
+
+- `timezones.py`: `is_valid_timezone` (IANA names only, checked with `zoneinfo`; rejects paths and shell characters) and `detect_host_timezone` (TZ, then the `/etc/localtime` link; UTC if unreadable).
+- `FamilyPolicy.timezone` (optional; validated; saved in the policy file).
+- Installer step 1 asks for the time zone after the language, defaulting to the computer's own, and retries on an unknown name. The summary shows it. Unattended installs take `--timezone`.
+- The autoinstall sets `timezone:` (or `geoip` when the policy has none). The apply runs `timedatectl set-timezone`.
+- `family-ctl verify` checks that the system time zone matches the policy.
+- `build-autoinstall-iso.sh` and `build-virtualbox-vm.sh` take `TIMEZONE`.
+
+Tests: `tests/test_timezone.py` (validation, host detection, policy round trip, autoinstall, apply, unattended and interactive installer). An unattended export on this Mac wrote `timezone: Australia/Melbourne` to both the autoinstall and the policy. Not yet run in a VirtualBox install.
 
 ## Open items, in priority order
 

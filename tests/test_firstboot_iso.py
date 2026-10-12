@@ -107,23 +107,38 @@ def test_gateway_reloads_the_child_rules_on_every_start():
     assert unit.index("ExecStartPre=") < unit.index("ExecStart=/usr/bin/python3")
 
 
-def test_child_shell_is_listed_so_the_login_screen_shows_children(tmp_path):
+def test_child_is_marked_as_a_regular_account_for_the_login_screen(tmp_path):
+    # AccountsService hides nologin accounts even when /etc/shells lists nologin (seen in VirtualBox).
     from family_linux.security.adapter import SystemAdapter
     from family_linux.security.users import UserManager
 
-    shells = tmp_path / "shells"
-    shells.write_text("/bin/sh\n/bin/bash\n")
     adapter = SystemAdapter(dry_run=True)
-    UserManager(adapter).allow_child_shell_on_login_screen("/usr/sbin/nologin", shells_file=shells)
-    assert adapter.simulated_files[str(shells)] == "/bin/sh\n/bin/bash\n/usr/sbin/nologin\n"
+    UserManager(adapter).show_child_on_login_screen("kid", users_dir=tmp_path)
+    assert adapter.simulated_files[str(tmp_path / "kid")] == "[User]\nSystemAccount=false\n"
 
-    shells.write_text("/bin/sh\n/usr/sbin/nologin\n")
+
+def test_login_screen_override_keeps_other_accountsservice_settings(tmp_path):
+    from family_linux.security.adapter import SystemAdapter
+    from family_linux.security.users import UserManager
+
+    (tmp_path / "kid").write_text("[User]\nSession=ubuntu\nSystemAccount=true\nLanguage=en_AU.UTF-8\n")
     adapter = SystemAdapter(dry_run=True)
-    UserManager(adapter).allow_child_shell_on_login_screen("/usr/sbin/nologin", shells_file=shells)
-    assert str(shells) not in adapter.simulated_files
+    UserManager(adapter).show_child_on_login_screen("kid", users_dir=tmp_path)
+    written = adapter.simulated_files[str(tmp_path / "kid")]
+    assert "SystemAccount=false" in written and "SystemAccount=true" not in written
+    assert "Session=ubuntu" in written and "Language=en_AU.UTF-8" in written
+
+    (tmp_path / "kid").write_text(written)
+    adapter = SystemAdapter(dry_run=True)
+    UserManager(adapter).show_child_on_login_screen("kid", users_dir=tmp_path)
+    assert str(tmp_path / "kid") not in adapter.simulated_files  # already correct: no rewrite
 
 
-def test_network_is_managed_by_networkmanager_without_the_networkd_wait():
+def test_installed_system_uses_networkmanager_but_the_installer_does_not():
     _, auto = _user_data()
-    assert auto["network"]["network"]["renderer"] == "NetworkManager"
+    # The live-server installer has no NetworkManager; a renderer here broke the install.
+    assert "renderer" not in auto["network"]["network"]
+    commands = "\n".join(auto["late-commands"])
+    assert "/target/etc/netplan/01-network-manager-all.yaml" in commands
+    assert "renderer: NetworkManager" in commands
     assert "curtin in-target -- systemctl disable systemd-networkd-wait-online.service" in auto["late-commands"]
