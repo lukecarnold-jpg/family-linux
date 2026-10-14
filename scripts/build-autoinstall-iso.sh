@@ -98,6 +98,33 @@ cp "${PROJECT_ROOT}/config/applications/org.familylinux.Parent.desktop" "$PAYLOA
 cp "${PROJECT_ROOT}/config/polkit/org.familylinux.manage.policy" "$PAYLOAD/family-linux/"
 rsync -a --exclude '__pycache__' --exclude '*.egg-info' "${PROJECT_ROOT}/src/" "$PAYLOAD/family-linux/src/"
 
+# Optional desktop wallpaper: one PNG or JPEG in config/wallpaper/. It becomes the default for
+# every account. Ubuntu sets its own in 10_ubuntu-settings, including an ":ubuntu" session
+# override, so this override sets both and sorts after it.
+WALLPAPERS=()
+for f in "${PROJECT_ROOT}"/config/wallpaper/*; do
+    case "$(printf '%s' "$f" | tr '[:upper:]' '[:lower:]')" in
+        *.png|*.jpg|*.jpeg) WALLPAPERS+=("$f") ;;
+    esac
+done
+if [ "${#WALLPAPERS[@]}" -gt 1 ]; then
+    echo "config/wallpaper/ holds ${#WALLPAPERS[@]} images; keep one." >&2
+    exit 2
+elif [ "${#WALLPAPERS[@]}" -eq 1 ]; then
+    ext="$(printf '%s' "${WALLPAPERS[0]##*.}" | tr '[:upper:]' '[:lower:]')"
+    cp "${WALLPAPERS[0]}" "$PAYLOAD/family-linux/wallpaper.${ext}"
+    uri="file:///usr/share/backgrounds/family-linux/wallpaper.${ext}"
+    {
+        for schema in org.gnome.desktop.background org.gnome.desktop.background:ubuntu; do
+            printf "[%s]\npicture-uri='%s'\npicture-uri-dark='%s'\npicture-options='zoom'\n\n" "$schema" "$uri" "$uri"
+        done
+        for schema in org.gnome.desktop.screensaver org.gnome.desktop.screensaver:ubuntu; do
+            printf "[%s]\npicture-uri='%s'\n\n" "$schema" "$uri"
+        done
+    } > "$PAYLOAD/family-linux/90_family-linux.gschema.override"
+    echo "Wallpaper: $(basename "${WALLPAPERS[0]}")"
+fi
+
 # 3. Boot menu: start the autoinstall from the ISO's nocloud directory without a prompt
 xorriso -osirrox on -indev "$ISO_SRC" -extract /boot/grub/grub.cfg "${BUILD_DIR}/grub.cfg" >/dev/null 2>&1
 chmod u+w "${BUILD_DIR}/grub.cfg"  # ISO files are read-only

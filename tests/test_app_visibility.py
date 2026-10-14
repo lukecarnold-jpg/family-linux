@@ -83,3 +83,19 @@ def test_legacy_hidden_template_is_recognised_as_ours():
 def test_system_and_snap_and_flatpak_exports_are_all_discovered():
     assert SNAP_DESKTOP_DIR in SYSTEM_APP_DIRS
     assert FLATPAK_DESKTOP_DIR in SYSTEM_APP_DIRS
+
+
+def test_child_owns_local_and_share_and_the_overrides_folder_is_locked_after_writing(tmp_path):
+    # Root used to own ~/.local and ~/.local/share, so apps could not save there for children.
+    apps, home, child, overrides = _setup(tmp_path, approved=[])
+    adapter = SystemAdapter(dry_run=True)
+    AppGuard(adapter).apply_child_desktop_filters(child, home_root=home, app_dirs=[apps])
+
+    local = home / "kid" / ".local"
+    commands = adapter.executed_commands
+    assert ["chown", "kid:", str(local)] in commands
+    assert ["chown", "kid:", str(local / "share")] in commands
+    unlock = commands.index(["chattr", "-i", str(overrides)])
+    assert commands[-1] == ["chattr", "+i", str(overrides)]  # locked again, last
+    assert unlock < len(commands) - 1
+    assert str(overrides / "vlc.desktop") in adapter.simulated_files  # the hidden override was written

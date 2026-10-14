@@ -134,7 +134,29 @@ class AppGuard:
             return 0, 0
 
         self.adapter.run_command(["mkdir", "-p", str(child_apps_dir)])
+        # mkdir runs as root, but ~/.local and ~/.local/share are the child's: GNOME and apps keep
+        # the Trash, keyring, recent files and app data there. When root owned them, apps that save
+        # there failed for children (seen: ibus-table crashed at login).
+        local_dir = child_apps_dir.parent.parent
+        for directory in (local_dir, local_dir / "share"):
+            self.adapter.run_command(["chown", f"{child.username}:", str(directory)])
+        # Only the overrides folder stays root's. The child owns the folder around it, so it could
+        # be renamed away and every hidden app would come back; immutable stops that. Lifted only
+        # while the overrides are rewritten.
+        self.adapter.run_command(["chattr", "-i", str(child_apps_dir)])
+        try:
+            return self._write_child_overrides(child, child_apps_dir, confine, app_dirs, snap_dir)
+        finally:
+            self.adapter.run_command(["chattr", "+i", str(child_apps_dir)])
 
+    def _write_child_overrides(
+        self,
+        child: ChildAccount,
+        child_apps_dir: Path,
+        confine: bool,
+        app_dirs: Optional[List[Path]],
+        snap_dir: Path,
+    ) -> Tuple[int, int]:
         hidden_count = 0
         confined_count = 0
         discovered_ids = set()

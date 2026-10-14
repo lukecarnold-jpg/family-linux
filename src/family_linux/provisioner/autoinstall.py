@@ -18,6 +18,7 @@ from family_linux.provisioner.sha512crypt import sha512_crypt
 # Paths on the ISO and on the installed system. The build script copies the payload to ISO_PAYLOAD_DIR.
 ISO_PAYLOAD_DIR = "/cdrom/family-linux"
 FIRSTBOOT_UNIT = "family-linux-firstboot.service"
+WALLPAPER_OVERRIDE = "90_family-linux.gschema.override"  # written by the ISO build when a wallpaper is set
 
 
 class SubiquityAutoinstallGenerator:
@@ -111,6 +112,16 @@ class SubiquityAutoinstallGenerator:
             f"install -m 755 {ISO_PAYLOAD_DIR}/family-linux-parent /target/usr/local/bin/family-linux-parent",
             f"install -m 644 {ISO_PAYLOAD_DIR}/org.familylinux.Parent.desktop /target/usr/share/applications/org.familylinux.Parent.desktop",
             f"install -m 644 {ISO_PAYLOAD_DIR}/org.familylinux.manage.policy /target/usr/share/polkit-1/actions/org.familylinux.manage.policy",
+        ]
+
+        # Optional wallpaper from config/wallpaper/ (see scripts/build-autoinstall-iso.sh): the image
+        # and a GNOME settings override that makes it every account's default. Skipped without one.
+        late_commands += [
+            f"sh -c 'if [ -f {ISO_PAYLOAD_DIR}/{WALLPAPER_OVERRIDE} ]; then "
+            f"mkdir -p /target/usr/share/backgrounds/family-linux && "
+            f"install -m 644 {ISO_PAYLOAD_DIR}/wallpaper.* /target/usr/share/backgrounds/family-linux/ && "
+            f"install -m 644 {ISO_PAYLOAD_DIR}/{WALLPAPER_OVERRIDE} /target/usr/share/glib-2.0/schemas/; fi'",
+            "curtin in-target -- glib-compile-schemas /usr/share/glib-2.0/schemas",
         ]
 
         # The installed desktop uses NetworkManager, as Ubuntu Desktop does. Not set in the installer's

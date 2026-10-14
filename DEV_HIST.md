@@ -527,6 +527,21 @@ Browser settings for other browsers:
 
 Evidence: unit tests, 224 passed, 5 skipped. New tests: the per-name store and its expiry, candidate order and that unlearned addresses are never tried, a full proxy connection that falls back from an unreachable IPv6 address to IPv4, the resolver recording names, and policies written for every supported browser.
 
+## Session 21: Wallpaper, and children's ~/.local owned by root
+
+Request from the user: build their wallpaper into the ISOs and the `.ova`.
+
+- `config/wallpaper/`: one PNG or JPEG. The ISO build copies it into the payload and writes `90_family-linux.gschema.override`, which sets `org.gnome.desktop.background` and `org.gnome.desktop.screensaver` for both the plain and the `:ubuntu` session keys (Ubuntu's own `10_ubuntu-settings` override sets the `:ubuntu` ones). A late command installs both and runs `glib-compile-schemas`; it does nothing when the ISO carries no wallpaper. The build stops if the folder holds more than one image.
+- Checked: the image and override are in both ISOs; the child's desktop in the rebuilt `.ova` shows the wallpaper.
+
+Found in the same check: at the child's first login Ubuntu showed "Sorry, Ubuntu 24.04 has experienced an internal error". The crash report was `ibus-table` (`PermissionError: '/home/kid/.local/share/ibus-table'`).
+
+- Cause: `AppGuard.apply_child_desktop_filters` ran `mkdir -p ~/.local/share/applications` as root, so root owned the child's `~/.local` and `~/.local/share`. GNOME and apps keep the Trash, keyring, recent files and app data there, so all of these failed for children, not only `ibus-table`.
+- Fix: the apply gives `~/.local` and `~/.local/share` back to the child (`chown kid:`). The `applications` folder of overrides stays root's and is now immutable (`chattr +i`), lifted only while the overrides are rewritten. Without that, the child, who now owns the folder around it, could rename it away and every hidden app would reappear.
+- Checked in the VM with the patched file: the child owns `.local` and `.local/share` and can create folders there; `lsattr` shows `i` on `applications`; as the child, `mv` of `applications` and creating a file in it both fail with "Operation not permitted". After clearing the old crash report and the child's session, a fresh child login showed the desktop with no error.
+
+Evidence: unit tests, 228 passed, 5 skipped (new: the late command is guarded and followed by `glib-compile-schemas`; the ownership and lock commands, with the lock last).
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

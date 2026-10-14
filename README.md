@@ -83,6 +83,8 @@ PARENT_PASS='Correct-Horse-42-Battery' ./scripts/build-autoinstall-iso.sh
 
 The installed system uses the time zone of the computer that builds the ISO; set `TIMEZONE` (for example `TIMEZONE=Australia/Sydney`) to choose another. Bedtimes and curfews use local time. The image is downloaded to `build/` and checked against Ubuntu's `SHA256SUMS`. The parent password must meet the parent rules. Only its hash is written to the ISO.
 
+To set the desktop wallpaper, put one `.png` or `.jpg` in `config/wallpaper/` before building. It becomes the default desktop and lock-screen picture for every account (see `config/wallpaper/README.md`).
+
 **VirtualBox appliance (.ova):** `scripts/build-virtualbox-vm.sh` builds the ISO, installs it into a new VirtualBox VM without any prompts, waits for the first-boot apply, and exports an appliance. It needs VirtualBox 7.2 or later; on an Apple silicon Mac it builds an arm64 VM.
 
 ```bash
