@@ -40,9 +40,13 @@ done
 : "${PARENT_PASS:?Set PARENT_PASS to the parent password (min 14 characters, with upper-case, lower-case, a number and a special character)}"
 
 ISO_NAME="ubuntu-${UBUNTU_RELEASE}-live-server-${ARCH}.iso"
-# arm64 images are on cdimage.ubuntu.com; amd64 images are on releases.ubuntu.com.
-if [ "$ARCH" = arm64 ]; then
-    UBUNTU_BASE_URL="https://cdimage.ubuntu.com/releases/24.04/release"
+# arm64 images are on cdimage.ubuntu.com; amd64 images are on releases.ubuntu.com. Override with
+# UBUNTU_BASE_URL if Ubuntu moves them again (cdimage.ubuntu.com/releases/ moved under /ubuntu/ in
+# October 2026).
+if [ -n "${UBUNTU_BASE_URL:-}" ]; then
+    :
+elif [ "$ARCH" = arm64 ]; then
+    UBUNTU_BASE_URL="https://cdimage.ubuntu.com/ubuntu/releases/24.04/release"
 else
     UBUNTU_BASE_URL="https://releases.ubuntu.com/24.04"
 fi
@@ -59,7 +63,10 @@ if [ ! -f "$ISO_SRC" ] || [ -f "${ISO_SRC}.partial" ]; then
     curl -fL --retry 3 -C - -o "${ISO_SRC}.partial" "${UBUNTU_BASE_URL}/${ISO_NAME}"
     mv "${ISO_SRC}.partial" "$ISO_SRC"
 fi
-curl -fsL -o "${BUILD_DIR}/SHA256SUMS" "${UBUNTU_BASE_URL}/SHA256SUMS"
+curl -fsSL -o "${BUILD_DIR}/SHA256SUMS" "${UBUNTU_BASE_URL}/SHA256SUMS" || {
+    echo "Could not download ${UBUNTU_BASE_URL}/SHA256SUMS. If Ubuntu moved its images, set UBUNTU_BASE_URL." >&2
+    exit 1
+}
 expected="$(grep " \*${ISO_NAME}\$" "${BUILD_DIR}/SHA256SUMS" | awk '{print $1}')"
 [ -n "$expected" ] || { echo "No checksum for ${ISO_NAME} in SHA256SUMS" >&2; exit 1; }
 if command -v sha256sum >/dev/null; then
