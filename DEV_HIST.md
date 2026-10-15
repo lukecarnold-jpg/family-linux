@@ -557,6 +557,7 @@ Request from the user: say the GitHub status in the README, and keep README, DEV
 - STRUCTURE.md was missing `dns_gateway.py`, `tls_proxy.py`, `web_gateway.py`, `desktop_lockdown.py`, `release_upgrades.py`, the parent guide, the wallpaper folder, and the Chrome, Edge, Brave and gateway file paths. These are added, along with new test entries.
 - CI found a test-collection error on every unit-test job (PR #6): `test_gnome_app_backend.py` imported `tests.test_cli`, which works under `python -m pytest` but not under plain `pytest`. The `test_ctl` fixture moved to `tests/conftest.py`. Plain `pytest` passes locally (228 passed, 5 skipped).
 - Pull request #6 (`arm64-iso` into `main`) carries these commits to CI.
+- The first CI run on PR #6 also failed one check: the live-install job's `child lookup example.com -> none`. The child's lookup returned nothing after about six seconds. The same lookup returned an address in a VM built from the same code, and the rerun passed all 13 checks. This looks like the intermittent upstream DNS failure in Session 12, not a regression. It is not yet diagnosed; the check should be made to report the upstream reply if it fails again.
 - Open for the parent's decision: open a pull request for `arm64-iso` so these commits go through CI, or push straight to `main`. Nothing has been committed for this session's documentation changes yet.
 
 ## Open items, in priority order
