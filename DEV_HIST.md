@@ -542,6 +542,21 @@ Found in the same check: at the child's first login Ubuntu showed "Sorry, Ubuntu
 
 Evidence: unit tests, 228 passed, 5 skipped (new: the late command is guarded and followed by `glib-compile-schemas`; the ownership and lock commands, with the lock last).
 
+- Build failure found on the same day: the arm64 image's `SHA256SUMS` returned 404 from `cdimage.ubuntu.com/releases/24.04/release/`, and the build stopped with no message. Ubuntu had moved the same files to `cdimage.ubuntu.com/ubuntu/releases/24.04/release/` (checksum unchanged). The build now uses the new path, reports a failed checksum download, and accepts `UBUNTU_BASE_URL`.
+
+## Session 22: Repository status and documentation upkeep
+
+Request from the user: say the GitHub status in the README, and keep README, DEV_HIST and STRUCTURE current with every change.
+
+- `gh` shows PR #5 (`arm64-iso` into `main`) **merged** on 12 October 2026 at 03:10 UTC. The earlier notes said it was open; they were out of date.
+- Seven commits were pushed to `arm64-iso` after that merge, from `e052a41` to `e968f56`. They are not on `main`, and no pull request is open for them.
+- CI runs only on pushes to `main` and on pull requests into `main` (`.github/workflows/ci.yml`). Those seven commits have never run in CI. Their tests were run locally: 228 passed, 5 skipped.
+- Branches `harden-prototype` and `snap-install-gate` are merged (PRs #3 and #4). They were not deleted.
+- The README said the repository "remains private". GitHub shows it as public. The README now says public, and it says built images are git-ignored and carry their build passwords.
+- The README's opening paragraph and its "not yet implemented" list said there was no ISO build; both are rewritten to describe what exists and what is not yet validated.
+- STRUCTURE.md was missing `dns_gateway.py`, `tls_proxy.py`, `web_gateway.py`, `desktop_lockdown.py`, `release_upgrades.py`, the parent guide, the wallpaper folder, and the Chrome, Edge, Brave and gateway file paths. These are added, along with new test entries.
+- Open for the parent's decision: open a pull request for `arm64-iso` so these commits go through CI, or push straight to `main`. Nothing has been committed for this session's documentation changes yet.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

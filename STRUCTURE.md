@@ -14,8 +14,8 @@ family-linux/
 ├── .gitignore             Ignores bytecode, pytest cache, build output, ISO images
 ├── .github/workflows/
 │   └── ci.yml             Test matrix (Python 3.9–3.13, Ubuntu and macOS) and privileged Linux job
-├── docs/                  Design documents (vision, architecture, installer, roadmap)
-├── config/                Policy templates and browser/systemd configuration
+├── docs/                  Design documents and the parent guide to web filtering
+├── config/                Policy templates, browser/systemd configuration, desktop files, wallpaper
 ├── scripts/               Bootstrap launcher and ISO build helper
 ├── src/family_linux/     Python implementation (installed as package `family_linux`)
 └── tests/                 pytest suite
@@ -31,6 +31,7 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | `architecture.md` | Five-layer model (Ubuntu base, security controls, child session, parent management, audit/recovery), data and policy model |
 | `installer.md` | 12-step installer flow, recommended vs advanced mode, validation and summary requirements |
 | `roadmap.md` | Phases 0 to 5, milestones |
+| `web-filtering-guide.md` | Step-by-step guide for parents with no IT background: blocking and allowing sites, website requests, other browsers |
 
 ## Configuration (`config/`)
 
@@ -46,13 +47,14 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | `polkit/org.familylinux.manage.policy` | polkit action for `pkexec family-ctl` (administrators, password remembered briefly) | Installed by the ISO |
 | `bin/family-ctl` | `family-ctl` wrapper for the installed system | Installed by the ISO to `/usr/local/sbin` |
 | `systemd/family-parent-dashboard.service` | Runs the parent web dashboard on port 8443 as root | Installed manually to `/etc/systemd/system` |
+| `wallpaper/` | Optional desktop wallpaper: one PNG or JPEG, with a README. Built into the ISO when present | `scripts/build-autoinstall-iso.sh`, `provisioner/autoinstall.py` |
 
 ## Scripts (`scripts/`)
 
 | File | Purpose |
 |------|---------|
 | `bootstrap-prototype.sh` | Launcher for every command: `install`, `dashboard`, `ctl`, `policyd`, `verify`, `test`, `autoinstall`. Sets `PYTHONPATH` to `src/`. |
-| `build-autoinstall-iso.sh` | Builds the install ISO: repacks Ubuntu 24.04.5 live-server (arm64 or amd64) with the autoinstall, the Family Linux payload and the first-boot unit |
+| `build-autoinstall-iso.sh` | Builds the install ISO: repacks Ubuntu 24.04.5 live-server (arm64 or amd64) with the autoinstall, the Family Linux payload, the wallpaper (if any) and the first-boot unit. `UBUNTU_BASE_URL` overrides the image location; arm64 images are on `cdimage.ubuntu.com/ubuntu/releases`, amd64 on `releases.ubuntu.com` |
 | `build-virtualbox-vm.sh` | Builds the ISO, installs it into a VirtualBox VM headless, waits for the first-boot apply, and exports an `.ova` |
 
 ## Source package (`src/family_linux/`)
@@ -76,13 +78,14 @@ Generated folders such as `__pycache__/` and `.pytest_cache/` are ignored by `.g
 | `config.py` | Load, save (atomic, `0600`), back up, and restore the policy YAML | `PolicyConfigManager` |
 | `audit/logger.py` | Append-only JSON-lines audit log with read and filter | `AuditLogger`, `AuditRecord` |
 | `installer/wizard.py` | Installer state machine and the 12 steps. Non-interactive mode builds the policy from flags. | `InstallerWizard` |
-| `provisioner/system.py` | Saves the policy first, then applies users, firewall, DNS, browsers, AppArmor, security updates, and desktop filters. Failures raise `ProvisioningError` naming the last completed step. | `SystemProvisioner.apply_policy`, `ProvisioningError` |
+| `provisioner/system.py` | Saves the policy first, then applies the time zone, users, firewall, DNS, the web gateway, browsers, AppArmor, security updates, the release-upgrade notice, the Firefox snap, and desktop filters. Failures raise `ProvisioningError` naming the last completed step. | `SystemProvisioner.apply_policy`, `ProvisioningError` |
 | `provisioner/firstboot.py` | First-boot apply with a done marker | `run`, `MARKER_PATH` |
 | `provisioner/sha512crypt.py` | SHA-512 crypt (`$6$`) for autoinstall password hashes (no `crypt` module on Python 3.13+) | `sha512_crypt` |
 | `provisioner/autoinstall.py` | Generates Ubuntu Subiquity autoinstall `user-data` (users, packages, late commands) | `SubiquityAutoinstallGenerator` |
-| `cli/family_ctl.py` | `status`, `user`, `app`, `time`, `web`, `audit`, `backup`, `verify` subcommands. `verify` reads real state for live checks on Linux. | `FamilyCtl`, `format_table` |
+| `cli/family_ctl.py` | `status`, `state` (JSON for the app), `user`, `app`, `time`, `web`, `audit`, `backup`, `verify` subcommands. `verify` reads real state for live checks on Linux, including the Firefox, Chromium and Brave policy files, the upgrade notice and the time zone. | `FamilyCtl`, `format_table` |
 | `gnome_app/app.py` | Family Controls, the parent's GNOME app (GTK 4, libadwaita 1.5): children, screen time, websites, apps, website requests, add child | `FamilyControlsApp`, `FamilyControlsWindow`, `AddChildDialog` |
 | `gnome_app/backend.py` | Runs `pkexec family-ctl ...` for the app; input checks; demo client | `FamilyCtlClient`, `DemoClient`, `make_client` |
+| `gnome_app/__main__.py` | Starts the Family Controls app (`python3 -m family_linux.gnome_app`) | `main` |
 | `parent_ui/server.py` | `http.server` dashboard: embedded HTML page plus JSON API (`/api/policy`, `/api/child`, `/api/web/block`, and others). Requires a token (bearer header or session cookie), checks Host and Origin, requires JSON bodies. Dependencies are injected via `make_handler()`. | `make_handler`, `run_server` |
 | `screentime/tracker.py` | Per-day usage minutes in JSON; evaluates quota and curfew | `ScreenTimeTracker` |
 | `screentime/daemon.py` | Polls logged-in users, sends warnings, terminates sessions at limit or curfew | `ScreenTimeDaemon` |
@@ -97,7 +100,12 @@ Each manager takes a `SystemAdapter`, so the same code path runs in simulation.
 | `users.py` | Creates parent and child accounts, groups (`family-parent`, `family-children`), sudoers, password, home permissions (`0700`) | `UserManager` |
 | `firewall.py` | UFW baseline: deny incoming, allow outgoing, block legacy outbound ports | `FirewallManager` |
 | `dns_filter.py` | systemd-resolved drop-in with family DNS servers; managed `/etc/hosts` block section | `DNSFilterManager` |
-| `browser.py` | Generates and writes Firefox and Chromium managed policies | `BrowserPolicyManager` |
+| `browser.py` | Generates and writes managed policies for Firefox, Chromium, Chrome, Edge and Brave (private windows, developer tools, SafeSearch, Brave Tor off). URL rules are per child and enforced by the gateway, not here | `BrowserPolicyManager` |
+| `dns_gateway.py` | Per-child DNS gateway. Answers each child's lookups from that child's rules, refuses blocked names, records blocked lookups for the parent, and adds allowed addresses to the child's nftables allow set | `ChildResolver`, `DomainRules`, `RequestLog`, `AddressAllowList`, `run` |
+| `tls_proxy.py` | Per-child HTTPS (SNI) and HTTP (Host) name check on the redirected ports 443 and 80. Relays a connection only when its address and name came from the child's allowed lookups; falls back to the name's other allowed addresses when one cannot be reached | `ProxyContext`, `decide`, `LearnedNameAddresses`, `connection_candidates` |
+| `web_gateway.py` | Renders the gateway's config, nftables rules and `family-dnsd.service` (rules loaded before the gateway starts, so the gateway fails closed) | `render_config`, `render_nft`, `render_service` |
+| `desktop_lockdown.py` | dconf locks: terminal shortcut and Alt+F2 command line | `DesktopLockdown` |
+| `release_upgrades.py` | Sets `Prompt=never` in `/etc/update-manager/release-upgrades`, so no release-upgrade notice appears; security updates are unaffected | `disable_release_upgrade_prompt`, `prompt_is_off` |
 | `apparmor.py` | Writes and loads the `family-linux-child` profile | `AppArmorManager`, `CHILD_SESSION_PROFILE` |
 | `app_guard.py` | Scans system, snap and flatpak `.desktop` files; writes marked `NoDisplay=true` overrides for unapproved apps in the child's home, and removes overrides that are no longer needed | `AppGuard`, `is_managed_override`, `MANAGED_MARKER` |
 | `desktop_refresh.py` | Re-applies child app approvals; run by `family-appguard.path` (systemd) when apt, snapd or flatpak changes desktop entries | `refresh`, `render_path_unit`, `render_service_unit`, `WATCHED_DIRS` |
@@ -116,7 +124,14 @@ Paths are chosen at runtime. The first set is used when running as root or when 
 | Screen-time usage | `/var/lib/family-linux/screentime.json` | `~/.local/share/family-linux/screentime.json` |
 | Child desktop overrides | `/home/<child>/.local/share/applications/` | (none) |
 | Firefox policy | `/etc/firefox/policies/policies.json` and `/usr/lib/firefox/distribution/policies.json` | (none) |
-| Chromium policy | `/etc/chromium/policies/managed/family-policy.json` and `/etc/opt/chrome/policies/managed/family-policy.json` | (none) |
+| Chromium policy | `/etc/chromium/policies/managed/family-policy.json` | (none) |
+| Chrome policy | `/etc/opt/chrome/policies/managed/family-policy.json` | (none) |
+| Edge policy | `/etc/opt/edge/policies/managed/family-policy.json` | (none) |
+| Brave policy | `/etc/brave/policies/managed/family-policy.json` (the Brave snap cannot read it; see DEV_HIST Session 20) | (none) |
+| Web gateway config and rules | `/etc/family-linux/dns-gateway.json`, `/etc/family-linux/nftables-children.nft`, `/etc/systemd/system/family-dnsd.service` | (none) |
+| Blocked web requests | `/var/lib/family-linux/web-requests.json` | (none) |
+| Release-upgrade notice | `/etc/update-manager/release-upgrades` (`Prompt=never`) | (none) |
+| Wallpaper (when built in) | `/usr/share/backgrounds/family-linux/`, `/usr/share/glib-2.0/schemas/90_family-linux.gschema.override` | (none) |
 | AppArmor profile | `/etc/apparmor.d/family-linux-child` | (none) |
 | DNS drop-in | `/etc/systemd/resolved.conf.d/family-linux-dns.conf` | (none) |
 | Sudoers drop-in | `/etc/sudoers.d/family-linux-admin` | (none) |
@@ -147,6 +162,10 @@ Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. R
 | `test_desktop_refresh.py` | Menu refresh units and re-apply |
 | `test_gnome_app_backend.py` | Family Controls backend (pkexec calls, password on stdin, errors), `state`/`web remove`/`--password-stdin`, install steps, system tools never approvable |
 | `test_secrets.py` | Passwords never serialised, never in repr, dropped from files on next save |
+| `test_app_visibility.py` | Approved apps shown, unapproved hidden, child owns `~/.local`, overrides folder locked |
+| `test_dns_gateway.py` | Per-child rules, blocked answers never reach the allow list, name-to-address records |
+| `test_tls_proxy.py` | ClientHello and Host parsing, ECH refusal, the allow decision, relay, IPv6 fallback to another allowed address |
+| `test_timezone.py` | Time zone validation and host default |
 | `test_provisioning.py` | Save-before-apply ordering and the `ProvisioningError` message |
 | `integration/test_linux_provisioning.py` | Real accounts, sudoers, and UFW. Root on Linux with `FAMILY_LINUX_INTEGRATION=1` only; skipped elsewhere |
 

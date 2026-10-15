@@ -2,10 +2,11 @@
 
 Family Linux is a private, prototype-stage project for a child-safe Ubuntu LTS desktop that one parent can manage without expert Linux knowledge.
 
-The repository holds a working Python prototype: an installer flow, a parent CLI, a local parent web dashboard, a screen-time enforcement daemon, and generators for browser, firewall, DNS, and AppArmor policy. It configures a running Ubuntu system. It does not yet install Ubuntu or build a bootable ISO, and it has not been validated on a real Ubuntu desktop.
+The repository holds a working Python prototype and the build for an installable system. It builds Ubuntu 24.04 install ISOs (arm64 and amd64) and a VirtualBox appliance (`.ova`). The arm64 appliance has been installed, booted and checked in VirtualBox on Apple silicon. It has not been installed on real hardware, and the amd64 ISO has not had a full install yet.
 
 - Repository layout: [STRUCTURE.md](STRUCTURE.md)
 - Development history, review findings, and open items: [DEV_HIST.md](DEV_HIST.md)
+- Parent guide to web filtering: [docs/web-filtering-guide.md](docs/web-filtering-guide.md)
 
 ## Project direction
 
@@ -162,24 +163,44 @@ On any other host, the live checks are reported as `[SKIP]` and the result is `[
 
 ## Current status
 
-Implemented (prototype level):
+Last updated 15 October 2026.
 
-- Policy model with validation, saved with backups to one YAML file
-- Parent CLI for child accounts, app approvals, screen-time limits, web block and allow lists, audit log, backups, and baseline verification
-- Parent web dashboard with token sign-in (JSON API and single page)
-- Screen-time tracker and enforcement daemon
-- Generators for firewall (UFW), DNS filtering, Firefox and Chromium policies, the AppArmor profile, and desktop app filters
-- Ubuntu autoinstall `user-data` generator (language, keyboard, and target disk carried through)
-- Live install on Ubuntu 24.04 verified in a container: accounts, sudoers, UFW, and the policy file
+### GitHub repository
 
-Not yet implemented, or not validated:
+- Repository: [lukecarnold-jpg/family-linux](https://github.com/lukecarnold-jpg/family-linux). Public. Default branch `main`.
+- `main` contains PRs #1 to #5. The most recent merge is PR #5 (Installable Family Linux), merged on 12 October 2026. Its CI run passed.
+- No pull requests are open.
+- Branch `arm64-iso` has 7 commits that are **not on `main`** and have **no open pull request**. They were pushed after PR #5 was merged. CI only runs on pushes to `main` and on pull requests into `main`, so these commits have not been through CI:
+  - `e052a41` Family Controls GNOME app; new-release upgrade notice off
+  - `edf8cad` Firefox and the App Centre
+  - `0062d2d` web filtering guide for parents
+  - `11fade4` README system requirements
+  - `cf321e2` web filter falls back to a site's other address; Brave and Edge settings
+  - `9eae121` wallpaper; children's `~/.local` owned by root
+  - `e968f56` arm64 image moved to `cdimage.ubuntu.com/ubuntu/releases`
+- Branches `harden-prototype` and `snap-install-gate` were merged in PRs #3 and #4 and can be deleted.
 
-- Installation to disk. The installer does not partition or install Ubuntu.
-- A bootable ISO. `scripts/build-autoinstall-iso.sh` prints manual steps.
-- Child session lockdown. Only desktop menu entries are hidden; a terminal is still reachable.
-- Confirmed browser policy on Ubuntu, where Firefox and Chromium are snaps.
-- The AppArmor profile is not yet attached to any process, so it may confine nothing.
-- Validation on a real Ubuntu VM with AppArmor and systemd running.
+### Implemented
+
+- Install ISOs for arm64 and amd64, built from the official Ubuntu 24.04.5 live-server image (checked against `SHA256SUMS`), with an unattended install and a first-boot apply of the policy.
+- VirtualBox appliance (arm64) built by `scripts/build-virtualbox-vm.sh`.
+- Parent password rules (14+ characters, all four character classes) at install and on every `passwd` change.
+- Child snap installs need the parent's password (polkit). The Snap Store app is hidden from children.
+- Family Controls, the parent's GNOME app: children, screen time, websites, website requests, apps.
+- Per-child web filtering through a local DNS gateway and HTTP(S) name check. Browser policies for Firefox, Chromium, Chrome, Edge and Brave (the Brave snap cannot read its policy, so it is blocked for children).
+- Time zone set during setup. Optional wallpaper from `config/wallpaper/`.
+- Ubuntu's new-release upgrade notice is turned off; security updates continue.
+- `family-ctl verify` reports real system state on Linux and says so when a check cannot run.
+- Test suite: 228 passed, 5 skipped (`pytest`).
+
+### Not yet done, or not validated
+
+- A full install from the amd64 ISO.
+- Installed-system tests on real hardware.
+- Browser settings in Chrome, Edge and Brave from Brave's own website have not been checked on an installed system. Firefox and Chromium have been set but not confirmed in a running browser.
+- Child lockdown is partial: terminals can still be reached by some routes. See the open items in [DEV_HIST.md](DEV_HIST.md).
+- Screen-time daemon and child notifications are not yet confirmed on an installed system.
+- The built images and the appliance contain the test passwords used to build them. Do not share them.
 
 The full list, with file references, is in [DEV_HIST.md](DEV_HIST.md).
 
@@ -196,4 +217,4 @@ MIT. See [LICENSE](LICENSE).
 
 ## Privacy
 
-This repository remains private until design and prototype quality are ready for a public release.
+The repository is public on GitHub. Built images (`build/` and `dist/`) are git-ignored and are not in the repository. They contain the passwords used to build them, so do not share them.
