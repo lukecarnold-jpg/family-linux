@@ -474,6 +474,113 @@ Found in the Session 16 review: nothing set the time zone, so installed systems 
 
 Tests: `tests/test_timezone.py` (validation, host detection, policy round trip, autoinstall, apply, unattended and interactive installer). An unattended export on this Mac wrote `timezone: Australia/Melbourne` to both the autoinstall and the policy. Not yet run in a VirtualBox install.
 
+## Session 18: Family Controls, the parent's GNOME app
+
+Request from the user: build in the GNOME GUI. Read as a native GNOME app for the parent (GTK 4 and libadwaita), as the desktop counterpart of the CLI and web dashboard.
+
+- `gnome_app/app.py`: sidebar with website requests and each child; a page per child (account, screen time, websites, apps); add-child dialog; confirmations for removal. Changes run in a background thread so the polkit prompt does not freeze the window.
+- `gnome_app/backend.py`: every call is `pkexec /usr/local/sbin/family-ctl ...`. A new polkit action (`org.familylinux.manage`, `auth_admin_keep`) covers it. The app never runs as root and adds no privileged code of its own.
+- New CLI pieces it needs: `family-ctl state` (JSON: policy without passwords, website requests, today's usage, installed apps), `user add --password-stdin` (keeps the password out of the process list), `web remove`.
+- Installed by the ISO: GTK/libadwaita packages, the launcher, the menu entry, and the polkit action. The app's desktop ID is always blocked for children.
+- Found while building it: the always-blocked list held command names (`gnome-terminal`), but Ubuntu 24.04 menus use desktop IDs (`org.gnome.Terminal`, `org.gnome.Settings`, `org.gnome.Software`, `snap-store_snap-store`). A parent could approve Terminal or Settings for a child. Those IDs are now always blocked.
+
+Evidence:
+- Unit tests: `tests/test_gnome_app_backend.py`. 218 passed, 5 skipped.
+- The interface ran in an Ubuntu 24.04 container (GTK 4.14, libadwaita 1.5, the versions an installed system has) under a virtual display with demo data: requests page, child page with all sections expanded, and the add-child dialog rendered without errors.
+- Installed system (the rebuilt arm64 `.ova`, imported into VirtualBox): the parent signed in; GNOME's app search found Family Controls; launching it showed the polkit prompt ("Authentication is required to view or change Family Linux settings", for Family Administrator); after the password, the app showed the real child. Turning "Can sign in" off ran `pkexec family-ctl user disable kid` without a second prompt (the password is remembered), showed "Child account 'kid' disabled.", and the sidebar updated; turning it back on worked the same way. The desktop clock showed local time, confirming the time zone from Session 17.
+- Seen in the same session: Ubuntu's release-upgrade notice ("Ubuntu 26.04.1 LTS Upgrade Available") opens in the parent's session, and would in a child's session too. Fixed: the apply now sets `Prompt=never` in `/etc/update-manager/release-upgrades` (keeping the file's comments), and `family-ctl verify` checks it. Security updates are unaffected (unattended-upgrades). The parent can still upgrade on purpose after setting it back to `lts`.
+- The backend ran against the real `family-ctl` in the container (without pkexec): state read, block, allow, remove, screen time, add child, disable; each change appeared in the next state, and the child's password did not.
+
+## Session 19: Browser and App Centre missing from the installed system
+
+Found by the user in the rebuilt OVA: no App Centre to download apps, and no web browser.
+
+- Browser: `firefox` was an apt package in the autoinstall. On Ubuntu 24.04 that package only installs the Firefox snap, and that step fails inside the installer, so no browser was installed. Firefox is now installed by the first-boot apply (`snap install firefox`, skipped if present). An autoinstall `snaps:` entry was tried first and did nothing: the installed system had no snaps at all. Children's default approved apps already name Firefox, so it is visible once installed.
+- App Centre: `gnome-software` and `gnome-software-plugin-snap` are installed. It was also on the always-blocked list, so children could not see it. It is now allowed and approved by default for every age tier. Children still cannot install silently: snap installs need the parent's authorisation through polkit, and apt installs need an administrator.
+- Test change: `test_app_centre_is_visible_to_children_and_approved_by_default` replaces the Session 18 assertion that the App Centre could not be approved.
+
+Evidence:
+- Unit tests: 219 passed, 5 skipped.
+- Rebuilt arm64 `.ova`, imported into VirtualBox and signed in as the parent: `snap list firefox` shows Firefox 157 (revision 9035, latest/stable); `/usr/share/applications/org.gnome.Software.desktop` exists; `sudo family-ctl verify` reports all baseline checks passed; Firefox shows in the dock.
+- The first attempt, an autoinstall `snaps:` entry, left no snaps on the installed system (see above), which is why Firefox moved to the first-boot apply.
+- Not yet checked: the amd64 ISO through a full install.
+
+## Session 20: Other browsers (Brave) and the web filter
+
+Reported by the user: in Brave, all web traffic for a child was denied, including allowed sites such as bbc.co.uk.
+
+Reproduced in the arm64 `.ova` in VirtualBox: Brave 1.97.56 from the Snap Store, approved for the child, run in the child's desktop session.
+
+- `curl` as the child reached `https://www.bbc.co.uk` (HTTP 200). The gateway logged `allow (looked up through the gateway)`.
+- In Brave the BBC page text loaded but no images did. The gateway log showed no refusals. It showed repeated `upstream connect to 2600:1415:...:443 failed: [Errno 113] No route to host`.
+- Cause: VirtualBox's NAT network advertises an IPv6 prefix and default route (`fd17:...`, via `fe80::2`), but IPv6 does not reach the internet. Without Family Linux a browser gets "unreachable" and retries over IPv4. For a child, nftables redirects the connection to the gateway's proxy, which accepts it first; when the proxy's own connection fails it can only close it, so the browser sees a dropped connection and does not retry. Every site the browser reaches over IPv6 fails. The route check is not enough to detect this: the route exists.
+- Fix: `tls_proxy.LearnedNameAddresses` records each name's addresses from the child's allowed lookups (`ChildResolver.learned_name_addresses`). When the connection to the original address fails, the proxy tries that name's other addresses, the other family first, up to 4, with a 2-second timeout while others remain. Only addresses the child's own allowed lookups returned for that name are tried, so nothing new becomes reachable.
+- Checked in the VM with the patched gateway: Brave as the child loaded bbc.co.uk (redirected to bbc.com) with all images.
+
+Browser settings for other browsers:
+
+- Managed settings were written only for Firefox, Chromium and Chrome. They are now also written for Brave (`/etc/brave/policies/managed/`, with `TorDisabled` added) and Microsoft Edge (`/etc/opt/edge/policies/managed/`). `family-ctl verify` checks the Brave file.
+- The Brave snap cannot read them. `brave://policy` showed no policies, and the kernel log showed AppArmor denials for profile `snap.brave.brave` opening `/etc/brave/policies/managed/`. Brave's snap package does not grant access to that folder, and Family Linux cannot change a snap's confinement. The Brave `.deb` from Brave's own repository reads the folder; that path is not tested.
+- What this leaves for a child using the Brave snap: the network filter still applies to every connection. Brave's own settings are not enforced: private windows, developer tools, extensions, SafeSearch, and Brave's own secure DNS. Secure DNS and Tor windows fail closed rather than bypass: the addresses they return or use were not returned by the child's lookups, so the proxy refuses them ("address ... not returned by an allowed lookup"). That refusal would also explain a browser where nothing loads.
+- Decision (parent's, this session): the Brave snap (`brave_brave`) is always blocked for children, since its settings cannot be enforced. The Brave package from Brave's repository (`brave-browser`) is not blocked.
+- Not tested: whether the user's own report had the IPv6 cause or Brave's secure DNS. The gateway log tells them apart (see the parent guide).
+
+Evidence: unit tests, 224 passed, 5 skipped. New tests: the per-name store and its expiry, candidate order and that unlearned addresses are never tried, a full proxy connection that falls back from an unreachable IPv6 address to IPv4, the resolver recording names, and policies written for every supported browser.
+
+## Session 21: Wallpaper, and children's ~/.local owned by root
+
+Request from the user: build their wallpaper into the ISOs and the `.ova`.
+
+- `config/wallpaper/`: one PNG or JPEG. The ISO build copies it into the payload and writes `90_family-linux.gschema.override`, which sets `org.gnome.desktop.background` and `org.gnome.desktop.screensaver` for both the plain and the `:ubuntu` session keys (Ubuntu's own `10_ubuntu-settings` override sets the `:ubuntu` ones). A late command installs both and runs `glib-compile-schemas`; it does nothing when the ISO carries no wallpaper. The build stops if the folder holds more than one image.
+- Checked: the image and override are in both ISOs; the child's desktop in the rebuilt `.ova` shows the wallpaper.
+
+Found in the same check: at the child's first login Ubuntu showed "Sorry, Ubuntu 24.04 has experienced an internal error". The crash report was `ibus-table` (`PermissionError: '/home/kid/.local/share/ibus-table'`).
+
+- Cause: `AppGuard.apply_child_desktop_filters` ran `mkdir -p ~/.local/share/applications` as root, so root owned the child's `~/.local` and `~/.local/share`. GNOME and apps keep the Trash, keyring, recent files and app data there, so all of these failed for children, not only `ibus-table`.
+- Fix: the apply gives `~/.local` and `~/.local/share` back to the child (`chown kid:`). The `applications` folder of overrides stays root's and is now immutable (`chattr +i`), lifted only while the overrides are rewritten. Without that, the child, who now owns the folder around it, could rename it away and every hidden app would reappear.
+- Checked in the VM with the patched file: the child owns `.local` and `.local/share` and can create folders there; `lsattr` shows `i` on `applications`; as the child, `mv` of `applications` and creating a file in it both fail with "Operation not permitted". After clearing the old crash report and the child's session, a fresh child login showed the desktop with no error.
+
+Evidence: unit tests, 228 passed, 5 skipped (new: the late command is guarded and followed by `glib-compile-schemas`; the ownership and lock commands, with the lock last).
+
+- Build failure found on the same day: the arm64 image's `SHA256SUMS` returned 404 from `cdimage.ubuntu.com/releases/24.04/release/`, and the build stopped with no message. Ubuntu had moved the same files to `cdimage.ubuntu.com/ubuntu/releases/24.04/release/` (checksum unchanged). The build now uses the new path, reports a failed checksum download, and accepts `UBUNTU_BASE_URL`.
+
+## Session 22: Repository status and documentation upkeep
+
+Request from the user: say the GitHub status in the README, and keep README, DEV_HIST and STRUCTURE current with every change.
+
+- `gh` shows PR #5 (`arm64-iso` into `main`) **merged** on 12 October 2026 at 03:10 UTC. The earlier notes said it was open; they were out of date.
+- Seven commits were pushed to `arm64-iso` after that merge, from `e052a41` to `e968f56`. They are not on `main`, and no pull request is open for them.
+- CI runs only on pushes to `main` and on pull requests into `main` (`.github/workflows/ci.yml`). Those seven commits have never run in CI. Their tests were run locally: 228 passed, 5 skipped.
+- Branches `harden-prototype` and `snap-install-gate` are merged (PRs #3 and #4). They were not deleted.
+- The README said the repository "remains private". GitHub shows it as public. The README now says public, and it says built images are git-ignored and carry their build passwords.
+- The README's opening paragraph and its "not yet implemented" list said there was no ISO build; both are rewritten to describe what exists and what is not yet validated.
+- STRUCTURE.md was missing `dns_gateway.py`, `tls_proxy.py`, `web_gateway.py`, `desktop_lockdown.py`, `release_upgrades.py`, the parent guide, the wallpaper folder, and the Chrome, Edge, Brave and gateway file paths. These are added, along with new test entries.
+- CI found a test-collection error on every unit-test job (PR #6): `test_gnome_app_backend.py` imported `tests.test_cli`, which works under `python -m pytest` but not under plain `pytest`. The `test_ctl` fixture moved to `tests/conftest.py`. Plain `pytest` passes locally (228 passed, 5 skipped).
+- Pull request #6 (`arm64-iso` into `main`) carries these commits to CI.
+- The first CI run on PR #6 also failed one check: the live-install job's `child lookup example.com -> none`. The child's lookup returned nothing after about six seconds. The same lookup returned an address in a VM built from the same code, and the rerun passed all 13 checks. This looks like the intermittent upstream DNS failure in Session 12, not a regression. It is not yet diagnosed; the check should be made to report the upstream reply if it fails again.
+- Open for the parent's decision: open a pull request for `arm64-iso` so these commits go through CI, or push straight to `main`. Nothing has been committed for this session's documentation changes yet.
+
+## Session 23: CLAUDE.md and a priority review
+
+Request from the user: a CLAUDE.md that keeps README.md, DEV_HIST.md and STRUCTURE.md current with each change, and a project review by Opus with a priority list of bugs and improvements for review and action.
+
+- `CLAUDE.md` added at the repository root: the documentation rule, commit and pull request rules, the plain `pytest` rule, VM and build secret handling, and the parent-facing style.
+- The review was run by an Opus subagent, read-only. Its findings are recorded under the review's own heading below once they are verified.
+
+## Session 24: Review item 1, a child's symlink gives root a write outside the child's folders
+
+Request from the user: act on the review's list, starting with item 1.
+
+- Defect (P0, introduced in Session 21): the root apply ran `mkdir -p` and `chown` on `/home/<child>/.local` by path. The child owns `.local` and `.local/share`, so the child could replace `share` with a symlink to any root-owned folder, and root then wrote override files there. Checked in the VM: with the Session 21 code, a root apply put seven root-owned `.desktop` files into a canary folder through the child's link.
+- Fix: `security/child_dirs.py`. The root path opens each component from the descriptor for the component above it, with `O_NOFOLLOW`. A symlink or a non-directory in the path refuses the whole apply (audit event `APP_OVERRIDES_REFUSED`). Writes go to a temporary name and are renamed into place, which replaces a link at the destination without following it. Removals unlink only. `chown` becomes `fchown` on the descriptor. The overrides folder is locked with `chattr +i` on `/proc/self/fd/N`, so the path is not resolved again.
+- Dry runs and tests keep the path-based code, so the recorded command sequence is unchanged.
+- Evidence:
+  - Unit tests (`tests/test_child_dirs.py`): a symlinked `.local` and `share` are refused with nothing written outside; a symlink at an override name or at the temporary name is replaced, not followed; removal removes the link only; the root path refuses a linked home. These run on real files without root. Note: on macOS `SystemAdapter` forces dry run, so the test adapter clears that flag.
+  - Installed system (VM from the current OVA, fixed files copied in): the attack made `share` a link to a root-owned canary folder and ran a root apply. The fixed code wrote nothing to the canary and logged `APP_OVERRIDES_REFUSED`. The same attack on the Session 21 code wrote into the canary.
+  - Normal case on the same VM: `.local` and `share` owned by the child, `applications` immutable, 110 managed overrides written.
+- Still open from the same review: item 2 (renaming `~/.local/share` brings hidden apps back, because the child owns the folders around the locked one). `chattr` protects the overrides folder only. The review's suggested fix is to block programs where they run, not only in menus.
+- Suite: 234 passed, 5 skipped.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

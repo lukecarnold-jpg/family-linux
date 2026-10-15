@@ -29,7 +29,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from family_linux.security.dns_gateway import DomainRules, RequestLog, TCP_TIMEOUT
 
@@ -41,6 +41,9 @@ SO_ORIGINAL_DST = 80  # IPv4: SOL_IP level
 IP6T_SO_ORIGINAL_DST = 80  # IPv6: IPPROTO_IPV6 level
 HELLO_LIMIT = 16384
 HELLO_TIMEOUT = 5.0
+# Connect timeout while other addresses remain to try, and how many of them to try.
+FALLBACK_CONNECT_TIMEOUT = 2.0
+MAX_FALLBACK_ADDRESSES = 4
 
 
 class _Store:
@@ -94,6 +97,50 @@ class LearnedNames(_Store):
 
     def allowed(self, name: str) -> bool:
         return self.remembered(name.rstrip(".").lower())
+
+
+class LearnedNameAddresses:
+    """The addresses each allowed lookup returned, by name, so a failed connection can try another.
+
+    Without this, a site whose IPv6 address cannot be reached fails for the child: the redirect
+    has already accepted the browser's connection, so the browser sees a dropped connection
+    instead of "unreachable" and never falls back to IPv4 as it would on its own.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._by_name: Dict[str, Dict[str, float]] = {}
+        self._lock = threading.Lock()
+
+    def remember(self, name: str, address: str, seconds: float) -> None:
+        key = name.rstrip(".").lower()
+        with self._lock:
+            self._by_name.setdefault(key, {})[str(ipaddress.ip_address(address))] = self._clock() + seconds
+
+    def addresses(self, name: str) -> List[str]:
+        key = name.rstrip(".").lower()
+        now = self._clock()
+        with self._lock:
+            entries = self._by_name.get(key, {})
+            for address in [a for a, expiry in entries.items() if expiry <= now]:
+                del entries[address]
+            return list(entries)
+
+
+def connection_candidates(
+    address: str, name: Optional[str], ctx: "ProxyContext"
+) -> List[str]:
+    """The original destination first, then the name's other allowed addresses, other family first."""
+    original = ipaddress.ip_address(address)
+    candidates = [str(original)]
+    if not name or ctx.name_addresses is None:
+        return candidates
+    others = [
+        a for a in ctx.name_addresses.addresses(name)
+        if a != str(original) and ctx.learned_addresses.allowed(a)
+    ]
+    others.sort(key=lambda a: ipaddress.ip_address(a).version == original.version)
+    return candidates + others[:MAX_FALLBACK_ADDRESSES]
 
 
 @dataclass
@@ -254,6 +301,7 @@ class ProxyContext:
     learned_names: LearnedNames
     log: RequestLog
     learned_ech: Optional[LearnedEchConfigs] = None
+    name_addresses: Optional[LearnedNameAddresses] = None
     # Opens the upstream connection. Injected by tests; production uses the default.
     connect: Callable[[Tuple[str, int], float], socket.socket] = socket.create_connection
 
@@ -310,10 +358,21 @@ def handle_connection(client: socket.socket, ctx: ProxyContext) -> None:
                 ctx.log.record(ctx.username, name, reason)
             return
 
-        try:
-            upstream = ctx.connect((address, port), TCP_TIMEOUT)
-        except OSError as exc:
-            _note(ctx, f"upstream connect to {address}:{port} failed: {exc}")
+        # Try the original destination, then the name's other allowed addresses. A browser does
+        # this itself when a connection fails, but here the connection was already accepted.
+        upstream = None
+        candidates = connection_candidates(address, name, ctx)
+        for index, candidate in enumerate(candidates):
+            timeout = FALLBACK_CONNECT_TIMEOUT if index < len(candidates) - 1 else TCP_TIMEOUT
+            try:
+                upstream = ctx.connect((candidate, port), timeout)
+            except OSError as exc:
+                _note(ctx, f"upstream connect to {candidate}:{port} failed: {exc}")
+                continue
+            if candidate != str(ipaddress.ip_address(address)):
+                _note(ctx, f"{name}: connected to {candidate}:{port} instead of {address}:{port}")
+            break
+        if upstream is None:
             return
         with upstream:
             # The connect timeout must not outlive the connect: a relayed connection can sit

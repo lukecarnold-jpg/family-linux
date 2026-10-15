@@ -2,10 +2,11 @@
 
 Family Linux is a private, prototype-stage project for a child-safe Ubuntu LTS desktop that one parent can manage without expert Linux knowledge.
 
-The repository holds a working Python prototype: an installer flow, a parent CLI, a local parent web dashboard, a screen-time enforcement daemon, and generators for browser, firewall, DNS, and AppArmor policy. It configures a running Ubuntu system. It does not yet install Ubuntu or build a bootable ISO, and it has not been validated on a real Ubuntu desktop.
+The repository holds a working Python prototype and the build for an installable system. It builds Ubuntu 24.04 install ISOs (arm64 and amd64) and a VirtualBox appliance (`.ova`). The arm64 appliance has been installed, booted and checked in VirtualBox on Apple silicon. It has not been installed on real hardware, and the amd64 ISO has not had a full install yet.
 
 - Repository layout: [STRUCTURE.md](STRUCTURE.md)
 - Development history, review findings, and open items: [DEV_HIST.md](DEV_HIST.md)
+- Parent guide to web filtering: [docs/web-filtering-guide.md](docs/web-filtering-guide.md)
 
 ## Project direction
 
@@ -35,24 +36,24 @@ Current protections in the prototype:
 
 ## System requirements
 
-These are the configurations the project has actually been run on. Lower limits have not been measured.
-
 **Machine that runs Family Linux (the installed system):**
 
-| Item | Used and tested | Build default |
-|------|-----------------|---------------|
-| Ubuntu | 24.04.5 LTS, desktop (`ubuntu-desktop-minimal`, installed by the ISO) | same |
-| Architecture | arm64 (tested end to end in VirtualBox 7.2.20) or amd64 (CI on x86_64 runners; the amd64 ISO and appliance have not been run end to end) | arm64 on Apple silicon, amd64 elsewhere |
-| Firmware | UEFI | UEFI |
-| Memory | 4 GB | 4096 MB |
-| CPU | 4 vCPUs in tests | 2 vCPUs (`CPUS`) |
-| Disk | 40 GB virtual disk; about 10 GB used after install, plus a swap file created by the installer | 40960 MB (`DISK_MB`) |
-| Network | required during install (packages are downloaded) | DHCP |
+| Item | Minimum | Recommended | Tested |
+|------|---------|-------------|--------|
+| Ubuntu | 24.04 LTS desktop (`ubuntu-desktop-minimal`, installed by the ISO) | 24.04.5 LTS | 24.04.5 LTS |
+| Architecture | amd64 or arm64 | arm64 on Apple silicon; amd64 on Intel or AMD PCs | arm64 end to end in VirtualBox 7.2.20. amd64 runs in CI; the amd64 ISO has not been installed end to end |
+| Firmware | UEFI | UEFI | UEFI |
+| Memory | 4 GB (Ubuntu's desktop minimum; not measured with Family Linux) | 8 GB for smooth use with several apps open | 4 GB (`MEMORY_MB` 4096) |
+| CPU | 2 cores (Ubuntu's desktop minimum; not measured) | 4 cores | 4 vCPUs |
+| Disk | 25 GB (Ubuntu's desktop minimum; not measured with Family Linux) | 64 GB or more, for updates and apps | 40 GB virtual disk; about 10 GB used after install |
+| Network | Needed during install (packages are downloaded) and for the first boot | Always connected, for security updates | DHCP |
+
+The minimums come from Ubuntu's published desktop requirements. Family Linux has only been measured at the tested values, so treat anything below them as untested.
 
 **Machine that builds the ISO and appliance:**
 
 - macOS on Apple silicon or Linux. The arm64 appliance was built on an Apple M4 Mac.
-- About 12 GB free: the Ubuntu image (3.8 GB), the built ISO (3.6 GB), and the appliance (4.2 GB), plus the VM disk.
+- About 12 GB free: the Ubuntu image (3.8 GB), the built ISO (3.6 GB), and the appliance (5.0 GB), plus the VM disk.
 - `xorriso`, `curl`, `rsync`, Python 3.9 or later with PyYAML, and for the appliance VirtualBox 7.2 or later (`VBoxManage`).
 
 **Running the tests or the CLI only:** Python 3.9 or later (`requires-python` in `pyproject.toml`). CI runs Python 3.9 to 3.13 on Ubuntu and macOS.
@@ -83,6 +84,8 @@ PARENT_PASS='Correct-Horse-42-Battery' ./scripts/build-autoinstall-iso.sh
 
 The installed system uses the time zone of the computer that builds the ISO; set `TIMEZONE` (for example `TIMEZONE=Australia/Sydney`) to choose another. Bedtimes and curfews use local time. The image is downloaded to `build/` and checked against Ubuntu's `SHA256SUMS`. The parent password must meet the parent rules. Only its hash is written to the ISO.
 
+To set the desktop wallpaper, put one `.png` or `.jpg` in `config/wallpaper/` before building. It becomes the default desktop and lock-screen picture for every account (see `config/wallpaper/README.md`).
+
 **VirtualBox appliance (.ova):** `scripts/build-virtualbox-vm.sh` builds the ISO, installs it into a new VirtualBox VM without any prompts, waits for the first-boot apply, and exports an appliance. It needs VirtualBox 7.2 or later; on an Apple silicon Mac it builds an arm64 VM.
 
 ```bash
@@ -92,6 +95,19 @@ PARENT_PASS='your-own-14+-char-Password!' CHILD_SPECS='kid:Kid:pre_teen:child-pa
 ```
 
 The appliance contains the parent password you build it with, so use your own and do not share an appliance built with a password other people know.
+
+### Family Controls (GNOME app)
+
+On an installed system, the parent opens **Family Controls** from the GNOME app menu. It shows each child, with:
+
+- **Account:** sign-in on or off, remove a child, add a child (the password is sent on standard input, never on the command line).
+- **Screen time:** daily limit, bedtimes for school nights and weekends, wake time, today's usage, reset today's usage.
+- **Websites:** block or always allow a site, remove a rule, and approve or keep blocked the sites a child asked for.
+- **Apps:** a switch for each installed app. System tools (Terminal, Settings, the software store) are always hidden for children.
+
+Every change runs `family-ctl` through `pkexec`. GNOME asks for the parent's password (polkit action `org.familylinux.manage`, remembered for a few minutes), so the app never runs as root. Children cannot open it: it is hidden from their menus, and polkit requires an administrator's password. It needs GTK 4 and libadwaita (`python3-gi`, `gir1.2-gtk-4.0`, `gir1.2-adw-1`), which the ISO installs.
+
+For design work without a real system: `FAMILY_LINUX_DEMO_STATE=state.json python3 -m family_linux.gnome_app`.
 
 ### Dashboard sign-in
 
@@ -126,6 +142,7 @@ Policy checks run everywhere. Live checks run only on Linux and read the real sy
 - Firefox and Chromium managed policy files present
 - AppArmor child profile loaded in enforce mode (asked of the kernel)
 - unattended security upgrades enabled
+- the new-release upgrade notice is off (security updates continue)
 - parent password rules enforced by PAM on password changes
 - snap installs by a child need the parent's password on every attempt (polkit rule; snapd installed)
 - child menus follow app approval: approved apps are shown, other system-wide apps are hidden, and the parent's home is private (0700)
@@ -146,24 +163,45 @@ On any other host, the live checks are reported as `[SKIP]` and the result is `[
 
 ## Current status
 
-Implemented (prototype level):
+Last updated 15 October 2026.
 
-- Policy model with validation, saved with backups to one YAML file
-- Parent CLI for child accounts, app approvals, screen-time limits, web block and allow lists, audit log, backups, and baseline verification
-- Parent web dashboard with token sign-in (JSON API and single page)
-- Screen-time tracker and enforcement daemon
-- Generators for firewall (UFW), DNS filtering, Firefox and Chromium policies, the AppArmor profile, and desktop app filters
-- Ubuntu autoinstall `user-data` generator (language, keyboard, and target disk carried through)
-- Live install on Ubuntu 24.04 verified in a container: accounts, sudoers, UFW, and the policy file
+### GitHub repository
 
-Not yet implemented, or not validated:
+- Repository: [lukecarnold-jpg/family-linux](https://github.com/lukecarnold-jpg/family-linux). Public. Default branch `main`.
+- `main` contains PRs #1 to #5. The most recent merge is PR #5 (Installable Family Linux), merged on 12 October 2026. Its CI run passed.
+- No pull requests are open.
+- Branch `arm64-iso` has 7 commits that are **not on `main`** and have **no open pull request**. They were pushed after PR #5 was merged. CI only runs on pushes to `main` and on pull requests into `main`, so these commits have not been through CI:
+  - `e052a41` Family Controls GNOME app; new-release upgrade notice off
+  - `edf8cad` Firefox and the App Centre
+  - `0062d2d` web filtering guide for parents
+  - `11fade4` README system requirements
+  - `cf321e2` web filter falls back to a site's other address; Brave and Edge settings
+  - `9eae121` wallpaper; children's `~/.local` owned by root
+  - `e968f56` arm64 image moved to `cdimage.ubuntu.com/ubuntu/releases`
+- Branches `harden-prototype` and `snap-install-gate` were merged in PRs #3 and #4 and can be deleted.
 
-- Installation to disk. The installer does not partition or install Ubuntu.
-- A bootable ISO. `scripts/build-autoinstall-iso.sh` prints manual steps.
-- Child session lockdown. Only desktop menu entries are hidden; a terminal is still reachable.
-- Confirmed browser policy on Ubuntu, where Firefox and Chromium are snaps.
-- The AppArmor profile is not yet attached to any process, so it may confine nothing.
-- Validation on a real Ubuntu VM with AppArmor and systemd running.
+### Implemented
+
+- Install ISOs for arm64 and amd64, built from the official Ubuntu 24.04.5 live-server image (checked against `SHA256SUMS`), with an unattended install and a first-boot apply of the policy.
+- VirtualBox appliance (arm64) built by `scripts/build-virtualbox-vm.sh`.
+- Parent password rules (14+ characters, all four character classes) at install and on every `passwd` change.
+- Child snap installs need the parent's password (polkit). The Snap Store app is hidden from children.
+- Family Controls, the parent's GNOME app: children, screen time, websites, website requests, apps.
+- Per-child web filtering through a local DNS gateway and HTTP(S) name check. Browser policies for Firefox, Chromium, Chrome, Edge and Brave (the Brave snap cannot read its policy, so it is blocked for children).
+- Time zone set during setup. Optional wallpaper from `config/wallpaper/`.
+- Ubuntu's new-release upgrade notice is turned off; security updates continue.
+- `family-ctl verify` reports real system state on Linux and says so when a check cannot run.
+- Test suite: 228 passed, 5 skipped (`pytest`).
+
+### Not yet done, or not validated
+
+- A full install from the amd64 ISO.
+- Installed-system tests on real hardware.
+- Browser settings in Chrome, Edge and Brave from Brave's own website have not been checked on an installed system. Firefox and Chromium have been set but not confirmed in a running browser.
+- A child can still bring hidden apps back by renaming `~/.local/share` (review item 2). Root can no longer be led to write outside the child's folders through a link (fixed in Session 24).
+- Child lockdown is partial: terminals can still be reached by some routes. See the open items in [DEV_HIST.md](DEV_HIST.md).
+- Screen-time daemon and child notifications are not yet confirmed on an installed system.
+- The built images and the appliance contain the test passwords used to build them. Do not share them.
 
 The full list, with file references, is in [DEV_HIST.md](DEV_HIST.md).
 
@@ -180,4 +218,4 @@ MIT. See [LICENSE](LICENSE).
 
 ## Privacy
 
-This repository remains private until design and prototype quality are ready for a public release.
+The repository is public on GitHub. Built images (`build/` and `dist/`) are git-ignored and are not in the repository. They contain the passwords used to build them, so do not share them.

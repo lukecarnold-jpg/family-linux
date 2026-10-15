@@ -142,3 +142,17 @@ def test_installed_system_uses_networkmanager_but_the_installer_does_not():
     assert "/target/etc/netplan/01-network-manager-all.yaml" in commands
     assert "renderer: NetworkManager" in commands
     assert "curtin in-target -- systemctl disable systemd-networkd-wait-online.service" in auto["late-commands"]
+
+
+def test_wallpaper_is_installed_only_when_the_iso_carries_one():
+    from family_linux.models import FamilyPolicy, ParentAccount
+    from family_linux.provisioner.autoinstall import ISO_PAYLOAD_DIR, SubiquityAutoinstallGenerator, WALLPAPER_OVERRIDE
+
+    text = SubiquityAutoinstallGenerator(FamilyPolicy(parent=ParentAccount("parent", "P", password="Correct-Horse-42-Battery"))).generate_user_data(locale="en_US.UTF-8", keyboard_layout="us")
+    commands = yaml.safe_load(text.split("\n", 1)[1])["autoinstall"]["late-commands"]
+    wallpaper = next(c for c in commands if WALLPAPER_OVERRIDE in c)
+    # guarded, so an ISO built without config/wallpaper/ installs nothing and does not fail
+    assert wallpaper.startswith(f"sh -c 'if [ -f {ISO_PAYLOAD_DIR}/{WALLPAPER_OVERRIDE} ]")
+    assert "/target/usr/share/backgrounds/family-linux/" in wallpaper
+    assert "/target/usr/share/glib-2.0/schemas/" in wallpaper
+    assert commands[commands.index(wallpaper) + 1] == "curtin in-target -- glib-compile-schemas /usr/share/glib-2.0/schemas"

@@ -70,6 +70,7 @@ DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
         "gcompris-qt",
         "scratch3",
         "org.gnome.Calculator",
+        "org.gnome.Software",
         "firefox",
         "vlc",
     ],
@@ -79,6 +80,7 @@ DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
         "scratch3",
         "libreoffice",
         "org.gnome.Calculator",
+        "org.gnome.Software",
         "firefox",
         "chromium",
         "vlc",
@@ -88,6 +90,7 @@ DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
         "scratch3",
         "libreoffice",
         "org.gnome.Calculator",
+        "org.gnome.Software",
         "firefox",
         "chromium",
         "vlc",
@@ -100,6 +103,7 @@ DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
         "firefox",
         "libreoffice",
         "org.gnome.Calculator",
+        "org.gnome.Software",
         "vlc",
     ],
 }
@@ -134,9 +138,20 @@ ALWAYS_BLOCKED_COMMANDS: List[str] = [
     "snap",
     "flatpak",
     "synaptic",
-    "gnome-software",
     "system-settings",
     "gnome-control-center",
+    "org.familylinux.parent",  # the parent's Family Controls app
+    # Desktop entry IDs on Ubuntu 24.04 (the names above are commands; menus use these IDs)
+    "org.gnome.terminal",
+    "org.gnome.console",
+    "org.gnome.ptyxis",
+    "org.gnome.settings",
+    "snap-store_snap-store",
+    "snap-store_ubuntu-software",
+    # Brave from the Snap Store: its sandbox cannot read managed browser settings, so private
+    # windows, SafeSearch and its own secure DNS stay under the child's control. The Brave
+    # package from Brave's own repository (brave-browser) is not blocked.
+    "brave_brave",
 ]
 
 

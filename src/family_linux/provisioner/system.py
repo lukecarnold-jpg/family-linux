@@ -18,6 +18,7 @@ from family_linux.security.browser import BrowserPolicyManager
 from family_linux.security.apparmor import AppArmorManager
 from family_linux.security.password_policy import ParentPasswordRules
 from family_linux.security.snap_policy import SnapInstallGate
+from family_linux.security.release_upgrades import disable_release_upgrade_prompt
 from family_linux.security.desktop_refresh import PATH_UNIT_NAME, WATCHED_DIRS, PATH_UNIT_PATH, SERVICE_UNIT_PATH, render_path_unit, render_service_unit
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.desktop_lockdown import DesktopLockdown
@@ -179,6 +180,21 @@ class SystemProvisioner:
                 results["warnings"].append(
                     "Could not enable unattended-upgrades (is the package installed?); security updates may not run"
                 )
+
+        # 6b2. No "new Ubuntu release" notice in any session (children's included); security
+        # updates above are unaffected.
+        disable_release_upgrade_prompt(self.adapter)
+        results["actions"].append("New-release upgrade notice turned off (security updates continue)")
+
+        # 6b3. The web browser. On Ubuntu 24.04 Firefox is a snap, and the apt package only installs it.
+        # Done here, not in the installer: the installer does not seed snaps, and snapd needs the
+        # network and a running daemon, which the first boot has.
+        if self.adapter.run_command(["snap", "list", "firefox"]).returncode != 0:
+            install = self.adapter.run_command(["snap", "install", "firefox"])
+            if install.returncode == 0:
+                results["actions"].append("Firefox installed (snap)")
+            else:
+                results["warnings"].append("Could not install Firefox (snap); children have no browser until it is installed")
 
         # 6c. Lock the desktop entry points that AppArmor cannot confine (terminal shortcut, Alt+F2)
         if policy.children:
