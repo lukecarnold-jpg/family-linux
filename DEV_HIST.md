@@ -560,6 +560,27 @@ Request from the user: say the GitHub status in the README, and keep README, DEV
 - The first CI run on PR #6 also failed one check: the live-install job's `child lookup example.com -> none`. The child's lookup returned nothing after about six seconds. The same lookup returned an address in a VM built from the same code, and the rerun passed all 13 checks. This looks like the intermittent upstream DNS failure in Session 12, not a regression. It is not yet diagnosed; the check should be made to report the upstream reply if it fails again.
 - Open for the parent's decision: open a pull request for `arm64-iso` so these commits go through CI, or push straight to `main`. Nothing has been committed for this session's documentation changes yet.
 
+## Session 23: CLAUDE.md and a priority review
+
+Request from the user: a CLAUDE.md that keeps README.md, DEV_HIST.md and STRUCTURE.md current with each change, and a project review by Opus with a priority list of bugs and improvements for review and action.
+
+- `CLAUDE.md` added at the repository root: the documentation rule, commit and pull request rules, the plain `pytest` rule, VM and build secret handling, and the parent-facing style.
+- The review was run by an Opus subagent, read-only. Its findings are recorded under the review's own heading below once they are verified.
+
+## Session 24: Review item 1, a child's symlink gives root a write outside the child's folders
+
+Request from the user: act on the review's list, starting with item 1.
+
+- Defect (P0, introduced in Session 21): the root apply ran `mkdir -p` and `chown` on `/home/<child>/.local` by path. The child owns `.local` and `.local/share`, so the child could replace `share` with a symlink to any root-owned folder, and root then wrote override files there. Checked in the VM: with the Session 21 code, a root apply put seven root-owned `.desktop` files into a canary folder through the child's link.
+- Fix: `security/child_dirs.py`. The root path opens each component from the descriptor for the component above it, with `O_NOFOLLOW`. A symlink or a non-directory in the path refuses the whole apply (audit event `APP_OVERRIDES_REFUSED`). Writes go to a temporary name and are renamed into place, which replaces a link at the destination without following it. Removals unlink only. `chown` becomes `fchown` on the descriptor. The overrides folder is locked with `chattr +i` on `/proc/self/fd/N`, so the path is not resolved again.
+- Dry runs and tests keep the path-based code, so the recorded command sequence is unchanged.
+- Evidence:
+  - Unit tests (`tests/test_child_dirs.py`): a symlinked `.local` and `share` are refused with nothing written outside; a symlink at an override name or at the temporary name is replaced, not followed; removal removes the link only; the root path refuses a linked home. These run on real files without root. Note: on macOS `SystemAdapter` forces dry run, so the test adapter clears that flag.
+  - Installed system (VM from the current OVA, fixed files copied in): the attack made `share` a link to a root-owned canary folder and ran a root apply. The fixed code wrote nothing to the canary and logged `APP_OVERRIDES_REFUSED`. The same attack on the Session 21 code wrote into the canary.
+  - Normal case on the same VM: `.local` and `share` owned by the child, `applications` immutable, 110 managed overrides written.
+- Still open from the same review: item 2 (renaming `~/.local/share` brings hidden apps back, because the child owns the folders around the locked one). `chattr` protects the overrides folder only. The review's suggested fix is to block programs where they run, not only in menus.
+- Suite: 234 passed, 5 skipped.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

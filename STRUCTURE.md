@@ -8,6 +8,7 @@ This document maps the repository: what each folder and module is for, how the p
 family-linux/
 ├── README.md              Project overview, quick start, status
 ├── STRUCTURE.md           This file
+├── CLAUDE.md              Working notes for Claude: documentation and testing rules
 ├── DEV_HIST.md            Development history and review findings
 ├── pyproject.toml         Package metadata, dependencies, entry points, pytest config
 ├── LICENSE                MIT
@@ -107,6 +108,7 @@ Each manager takes a `SystemAdapter`, so the same code path runs in simulation.
 | `desktop_lockdown.py` | dconf locks: terminal shortcut and Alt+F2 command line | `DesktopLockdown` |
 | `release_upgrades.py` | Sets `Prompt=never` in `/etc/update-manager/release-upgrades`, so no release-upgrade notice appears; security updates are unaffected | `disable_release_upgrade_prompt`, `prompt_is_off` |
 | `apparmor.py` | Writes and loads the `family-linux-child` profile | `AppArmorManager`, `CHILD_SESSION_PROFILE` |
+| `child_dirs.py` | Root-safe access to a child's override folder: each component opened with `O_NOFOLLOW` from the one above, writes by temporary name and rename, `fchown` for the child's folders, `chattr` on `/proc/self/fd/N`. Used by root real runs; dry runs use the path-based code in `app_guard.py` | `open_overrides_dir`, `write_file`, `remove_file`, `set_immutable` |
 | `app_guard.py` | Scans system, snap and flatpak `.desktop` files; writes marked `NoDisplay=true` overrides for unapproved apps in the child's home, and removes overrides that are no longer needed | `AppGuard`, `is_managed_override`, `MANAGED_MARKER` |
 | `desktop_refresh.py` | Re-applies child app approvals; run by `family-appguard.path` (systemd) when apt, snapd or flatpak changes desktop entries | `refresh`, `render_path_unit`, `render_service_unit`, `WATCHED_DIRS` |
 | `snap_policy.py` | Polkit rule that makes each child snap install, update or removal need the parent's password (`AUTH_ADMIN`); installs snapd if missing | `SnapInstallGate`, `render_polkit_rule`, `rule_in_place` |
@@ -162,6 +164,7 @@ Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. R
 | `test_desktop_refresh.py` | Menu refresh units and re-apply |
 | `test_gnome_app_backend.py` | Family Controls backend (pkexec calls, password on stdin, errors), `state`/`web remove`/`--password-stdin`, install steps, system tools never approvable |
 | `test_secrets.py` | Passwords never serialised, never in repr, dropped from files on next save |
+| `test_child_dirs.py` | A child's symlinks cannot make root write outside the child's folders (real files, no root needed) |
 | `test_app_visibility.py` | Approved apps shown, unapproved hidden, child owns `~/.local`, overrides folder locked |
 | `test_dns_gateway.py` | Per-child rules, blocked answers never reach the allow list, name-to-address records |
 | `test_tls_proxy.py` | ClientHello and Host parsing, ECH refusal, the allow decision, relay, IPv6 fallback to another allowed address |

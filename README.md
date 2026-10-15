@@ -198,6 +198,7 @@ Last updated 15 October 2026.
 - A full install from the amd64 ISO.
 - Installed-system tests on real hardware.
 - Browser settings in Chrome, Edge and Brave from Brave's own website have not been checked on an installed system. Firefox and Chromium have been set but not confirmed in a running browser.
+- A child can still bring hidden apps back by renaming `~/.local/share` (review item 2). Root can no longer be led to write outside the child's folders through a link (fixed in Session 24).
 - Child lockdown is partial: terminals can still be reached by some routes. See the open items in [DEV_HIST.md](DEV_HIST.md).
 - Screen-time daemon and child notifications are not yet confirmed on an installed system.
 - The built images and the appliance contain the test passwords used to build them. Do not share them.
