@@ -555,6 +555,8 @@ Request from the user: say the GitHub status in the README, and keep README, DEV
 - The README said the repository "remains private". GitHub shows it as public. The README now says public, and it says built images are git-ignored and carry their build passwords.
 - The README's opening paragraph and its "not yet implemented" list said there was no ISO build; both are rewritten to describe what exists and what is not yet validated.
 - STRUCTURE.md was missing `dns_gateway.py`, `tls_proxy.py`, `web_gateway.py`, `desktop_lockdown.py`, `release_upgrades.py`, the parent guide, the wallpaper folder, and the Chrome, Edge, Brave and gateway file paths. These are added, along with new test entries.
+- CI found a test-collection error on every unit-test job (PR #6): `test_gnome_app_backend.py` imported `tests.test_cli`, which works under `python -m pytest` but not under plain `pytest`. The `test_ctl` fixture moved to `tests/conftest.py`. Plain `pytest` passes locally (228 passed, 5 skipped).
+- Pull request #6 (`arm64-iso` into `main`) carries these commits to CI.
 - Open for the parent's decision: open a pull request for `arm64-iso` so these commits go through CI, or push straight to `main`. Nothing has been committed for this session's documentation changes yet.
 
 ## Open items, in priority order

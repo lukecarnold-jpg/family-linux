@@ -107,7 +107,7 @@ def test_demo_client_serves_the_file_and_accepts_changes(tmp_path):
 
 # CLI commands the app depends on
 
-from tests.test_cli import test_ctl  # noqa: E402,F401  (fixture)
+# test_ctl fixture: tests/conftest.py
 
 
 def test_state_command_prints_json_without_passwords(test_ctl, capsys):
