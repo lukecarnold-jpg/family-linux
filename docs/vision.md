@@ -2,7 +2,7 @@
 
 ## Mission
 
-Family Linux is an Ubuntu-based operating system concept designed for children to use safely and for one parent administrator to manage without expert Linux knowledge.
+Family Linux is a Debian-based operating system concept designed for children to use safely and for one parent administrator to manage without expert Linux knowledge.
 
 ## Product concept
 
@@ -24,7 +24,7 @@ The default experience should provide:
 
 ### Child accounts (zero or more)
 
-- standard non-admin Ubuntu users
+- standard non-admin Debian users
 - no `sudo` rights
 - restricted from package installation and core system configuration
 - limited to approved apps and policy-controlled browsing/session rules
@@ -35,7 +35,7 @@ Support for more than one parent-level administrator may be considered later, bu
 
 ## Security model direction
 
-Family Linux uses Ubuntu's standard security model:
+Family Linux uses Debian's standard security model:
 
 - Unix users/groups and file permissions for separation
 - `sudo` for the parent administrator
@@ -67,6 +67,6 @@ A milestone is successful when a parent can:
 
 ## Non-goals
 
-- replacing Ubuntu with a custom base distribution
+- replacing Debian with a custom base distribution
 - claiming complete policy enforcement before implementation exists
 - building a general unrestricted workstation experience by default

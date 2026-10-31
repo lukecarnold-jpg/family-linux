@@ -581,6 +581,49 @@ Request from the user: act on the review's list, starting with item 1.
 - Still open from the same review: item 2 (renaming `~/.local/share` brings hidden apps back, because the child owns the folders around the locked one). `chattr` protects the overrides folder only. The review's suggested fix is to block programs where they run, not only in menus.
 - Suite: 234 passed, 5 skipped.
 
+## Session 25: Debian stable with KDE Plasma (branch `debian-kde`)
+
+**Request.** Rebuild the project on Debian stable with KDE Plasma instead of Ubuntu, with access to the Debian application repositories. Keep the wallpaper and the family settings: website control and application installation.
+
+**Base.** The branch starts from `origin/arm64-iso`, which holds the wallpaper, the Family Controls app and the web-filter fixes. That branch was PR #6, and it was merged into `main` (commit `57ef875`) while this session was running. The content of `main` and `arm64-iso` is identical, so `debian-kde` is a clean descendant of `main`.
+
+**Changes.**
+
+- Installer: the Ubuntu Subiquity autoinstall is replaced by a Debian Installer preseed and a late-command script (`provisioner/preseed.py`). The preseed installs the `kde-desktop` task and the package list from the Debian repositories (main, contrib and non-free-firmware). The parent is the only sudo user. Children get nologin shells. The late command sets up groups, sudoers, the child accounts, the payload, the wallpaper step, NetworkManager with systemd-resolved, and unattended upgrades. Every interpolated value is shell-quoted.
+- ISO: `scripts/build-debian-iso.sh` replaces the Ubuntu builder. It reads the current netinst file name from `SHA512SUMS`, checks the checksum, patches the GRUB entries to read `file=/cdrom/preseed.cfg`, and repacks. The UEFI boot record survives the repack.
+- Appliance: `scripts/build-virtualbox-vm.sh` uses the `Debian_arm64` OS type and presses Enter at the boot menu, which waits for a key by design.
+- Security: the snap gate is replaced by `security/package_gate.py`, a polkit rule that asks for the parent's password on every PackageKit action by a child. The GNOME dconf locks are replaced by Plasma kiosk restrictions in `/etc/xdg/kdeglobals` (`shell_access`, `run_command`, `action/run_command`, `custom_config`), written as a managed block. The Ubuntu release-upgrade module and the AccountsService login-screen override are removed. SDDM lists users by UID, so it needs no override.
+- Browser: Firefox ESR policy is written to `/usr/lib/firefox-esr/distribution/policies.json` and to the two `/etc` locations.
+- Parent app: `family_linux/gnome_app` becomes `family_linux/kde_app`, a PyQt6 window. The backend is unchanged.
+- Wallpaper: Plasma has no system-wide default. The image is applied once per account at first login by an XDG autostart script (`config/bin/family-linux-set-wallpaper`), using a per-user marker.
+- Documentation: README, STRUCTURE, the design documents, the parent guide and CLAUDE.md now describe Debian. CI's ISO job checks the preseed layout.
+
+**Defect 1 (found in the first VM install): the package list named a package that does not exist.** The preseed installed `plasma-discover-backend-packagekit`. Evidence: the installer syslog has `in-target: E: Unable to locate package plasma-discover-backend-packagekit` at 20:34:57, then `main-menu: Configuring 'pkgsel' failed with error code 100` and `Menu item 'pkgsel' failed`. The installer stopped at its main menu with no late command run. The package is not in trixie. Discover's PackageKit support ships in `plasma-discover`, and the separate backends are flatpak, fwupd and snap. **Fix:** the list installs `packagekit` instead. Every other name was checked with `apt-cache show` against the target's own index. Only that one name was missing.
+
+**Defect 2 (the earlier name check proved nothing).** Before the first VM run, package names were checked by HTTP status on packages.debian.org, and every name returned 200. That check cannot tell a real package from a missing one, so it was not evidence. **Fix:** names are checked against the apt index. Keep that rule for any future package change.
+
+**Defect 3 (the VM paused during the install).** `VBox.log` records `VM is paused due to host power management` at 07:36. The Mac had idle sleep set to one minute (`pmset -g`). The paused VM could not be resumed with `controlvm resume`. `savestate` followed by `startvm` restored it, and the install carried on. The build run now keeps the Mac awake with `caffeinate`. This is a host setting, not a product defect. Once restored, the VM's display stayed black, but the installer's second shell was still reachable through the console.
+
+**Checks.**
+
+| Check | Result |
+|-------|--------|
+| `pytest` (plain) | 243 passed, 5 skipped (baseline on `arm64-iso`: 234 passed, 5 skipped). The new tests cover the preseed and its late script, including `sh -n` on a script with quoted child names, the Plasma kiosk block, the package gate, and the Family Controls window (offscreen) |
+| ISO build, arm64, Debian 13.7.0 netinst | Checksum matches `SHA512SUMS`. `preseed.cfg` and `late-command.sh` are on the ISO. Boot entries carry `file=/cdrom/preseed.cfg`. The UEFI El Torito record is kept. The ISO contains no plain-text password |
+| VM install, arm64, VirtualBox 7.2.20 (second run, package list fixed) | The package stage completed. The late command ran. First boot printed `First-boot provisioning complete: 24 actions` and no apply warnings. The VM reached `family-linux login:` |
+| VM: `smartmontools` | Failed to start (`[FAILED] Failed to start smartmontools.service`). Not investigated. Not expected to matter on a virtual disk |
+
+**Not verified yet.** Each item below is also in the open items.
+
+- Child sign-in at SDDM with a nologin shell. The child is not yet confirmed to appear on the login screen or to start a Plasma session.
+- Wallpaper applied at the first login.
+- Alt+F2 and Ctrl+Alt+T blocked for a child.
+- Discover asking for the parent's password before a child's install.
+- Firefox ESR reading its policy file (`about:policies`).
+- Contents of `/var/log/family-linux-install.log` on the installed system.
+- The NetworkManager and systemd-resolved DNS filter on the running system.
+- amd64: no install has run, and the BIOS boot menu is not patched.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
@@ -593,3 +636,12 @@ Request from the user: act on the review's list, starting with item 1.
 8. Add a pre-apply plan (dry-run diff) and consider rollback.
 9. Packaging: install the console scripts and systemd units.
 10. Scrub or recreate backups that hold old plaintext passwords.
+11. Session 25: confirm a child can sign in on the SDDM login screen and start a Plasma session with a nologin shell.
+12. Session 25: confirm the wallpaper appears at first login, and that Alt+F2 and Ctrl+Alt+T are blocked for a child.
+13. Session 25: confirm Discover asks for the parent's password before a child's install, and that the PackageKit rule takes effect.
+14. Session 25: confirm Firefox ESR reads `/usr/lib/firefox-esr/distribution/policies.json` (`about:policies`).
+15. Session 25: read `/var/log/family-linux-install.log` on the installed system and check that every late-command step ran.
+16. Session 25: find out why `smartmontools` fails to start in the VM.
+17. Session 25: the Linux CI jobs still run on Ubuntu runners. Add a Debian job, or run the install check in a VM job.
+18. Session 25: amd64 has not been installed, and its BIOS (isolinux) boot menu is not patched.
+19. Session 25: item 7 above is obsolete: Debian uses firefox-esr, not a snap.

@@ -43,7 +43,7 @@ jobs:
         env:
           PARENT_PASS: "ci-only-Passw0rd!"
         run: |
-          chmod +x scripts/bootstrap-prototype.sh scripts/build-autoinstall-iso.sh
+          chmod +x scripts/bootstrap-prototype.sh scripts/build-debian-iso.sh
           ./scripts/bootstrap-prototype.sh --help
           ./scripts/bootstrap-prototype.sh install --dry-run --non-interactive --parent-user "admin" --parent-name "Admin" --parent-pass "$PARENT_PASS"
           ./scripts/bootstrap-prototype.sh ctl status
@@ -53,8 +53,8 @@ jobs:
           ./scripts/bootstrap-prototype.sh ctl web block badsite.com
           ./scripts/bootstrap-prototype.sh ctl audit
           ./scripts/bootstrap-prototype.sh policyd --one-shot
-          ./scripts/bootstrap-prototype.sh autoinstall ci-autoinstall.yaml
-          test -f ci-autoinstall.yaml
+          ./scripts/bootstrap-prototype.sh preseed ci-preseed.cfg
+          test -f ci-preseed.cfg
 
   linux-integration:
     name: Privileged Linux integration (Python 3.12 on ubuntu-latest)
@@ -88,7 +88,7 @@ jobs:
             "$(which python)" -m pytest tests/integration -v -p no:cacheprovider
 
   live-install:
-    name: Live install and verify (Ubuntu VM with systemd and AppArmor)
+    name: Live apply and verify (Ubuntu runner with systemd and AppArmor; the Debian install is checked in VirtualBox)
     runs-on: ubuntu-latest
     # Applies a real policy to the ephemeral runner VM: creates accounts, enables UFW,
     # loads the AppArmor profile, and changes DNS. Nothing after this step needs the network.
@@ -157,9 +157,8 @@ jobs:
           done
           # Positive control for the same check: a permitted binary still runs.
           sudo aa-exec -p family-linux-child -- /usr/bin/env true
-          test -f /etc/dconf/db/local.d/00-family-linux
-          test -f /etc/dconf/db/local.d/locks/00-family-linux
-          echo "desktop lockdown files written"
+          grep -q "shell_access=false" /etc/xdg/kdeglobals
+          echo "desktop lockdown (Plasma kiosk restrictions) written"
 
       - name: Confirm the per-child DNS gateway filters each child separately
         run: |
@@ -357,10 +356,10 @@ jobs:
           sudo ss -ltnp | grep -E "54(01|02)|5301|5302" || true
 
   iso-amd64:
-    name: Build and check the amd64 install ISO (Ubuntu 24.04)
+    name: Build and check the amd64 install ISO (Debian stable)
     runs-on: ubuntu-latest
-    # Builds the ISO and checks what was built: the official checksum, both boot records, the boot
-    # menu's autoinstall arguments, and the payload. It does not install: an install under emulation
+    # Builds the ISO and checks what was built: the official checksum, the boot records, the boot
+    # menu's preseed arguments, and the payload. It does not install: an install under emulation
     # on a CI runner is too slow for this job. Run the install on hardware or a dedicated VM.
     steps:
       - name: Checkout repository
@@ -378,12 +377,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyyaml
 
-      - name: Cache the Ubuntu image
-        uses: actions/cache@v4
-        with:
-          path: build/ubuntu-24.04.5-live-server-amd64.iso
-          key: ubuntu-24.04.5-live-server-amd64
-
       - name: Build the ISO
         env:
           ARCH: amd64
@@ -391,24 +384,25 @@ jobs:
           PARENT_PASS: "CiParentPass-2026!"
           CHILD_SPECS: "kid:Kid:pre_teen:ci-child-pass"
           TIMEZONE: "UTC"
-        run: ./scripts/build-autoinstall-iso.sh
+        run: ./scripts/build-debian-iso.sh
 
       - name: Check the ISO
         run: |
-          ISO=dist/family-linux-ubuntu-24.04-amd64.iso
+          ISO=dist/family-linux-debian-stable-amd64.iso
           test -s "$ISO"
           # Both BIOS and UEFI boot records must survive the repack
           xorriso -indev "$ISO" -report_el_torito plain | grep -q "BIOS"
           xorriso -indev "$ISO" -report_el_torito plain | grep -q "UEFI"
-          # Boot menu: autoinstall from the ISO's nocloud directory, serial console for the log
+          # Boot menu (GRUB, UEFI): the preseed is read from the ISO root, serial console for the log
           xorriso -indev "$ISO" -osirrox on -extract /boot/grub/grub.cfg grub.cfg
-          grep -q "autoinstall ds=nocloud" grub.cfg
+          grep -q "file=/cdrom/preseed.cfg" grub.cfg
           grep -q "console=ttyS0" grub.cfg
-          # Payload: autoinstall config, policy without passwords, first-boot unit, family-ctl
-          xorriso -indev "$ISO" -osirrox on -extract /nocloud/user-data user-data
-          grep -q "^#cloud-config" user-data
-          grep -q "family-linux-firstboot.service" user-data
-          ! grep -q "CiParentPass-2026" user-data  # the parent password is stored hashed only
+          # Preseed: Debian with KDE Plasma; the late command runs from the payload
+          xorriso -indev "$ISO" -osirrox on -extract /preseed.cfg preseed.cfg
+          grep -q "tasksel tasksel/first multiselect kde-desktop" preseed.cfg
+          ! grep -q "CiParentPass-2026" preseed.cfg  # the parent password is stored hashed only
+          xorriso -indev "$ISO" -ls /family-linux | grep -q "late-command.sh"
+          xorriso -indev "$ISO" -ls /family-linux | grep -q "family-linux-firstboot.service"
           xorriso -indev "$ISO" -ls /family-linux | grep -q "family-ctl"
           xorriso -indev "$ISO" -ls /family-linux | grep -q "policy.yaml"
           xorriso -indev "$ISO" -ls /family-linux | grep -q "src"

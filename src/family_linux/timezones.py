@@ -1,7 +1,7 @@
 """Time zone names for the installer and policy.
 
 Curfews and bedtimes are evaluated in the system's local time, so the installed system must use the
-family's time zone. Ubuntu otherwise defaults to UTC.
+family's time zone. the Debian installer otherwise defaults to UTC.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - Python 3.9 has zoneinfo; kept for safe
     ZoneInfo = None  # type: ignore[assignment]
     ZoneInfoNotFoundError = KeyError  # type: ignore[assignment,misc]
 
-# Area/Location names only: they are written to the policy file, the autoinstall and timedatectl.
+# Area/Location names only: they are written to the policy file, the preseed and timedatectl.
 _NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_+\-]*(/[A-Za-z0-9_+\-]+)*$")
 DEFAULT_TIMEZONE = "UTC"
 

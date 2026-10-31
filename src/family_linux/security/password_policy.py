@@ -1,4 +1,4 @@
-"""Parent password rules for every password change, through Ubuntu's PAM password stack.
+"""Parent password rules for every password change, through Debian's PAM password stack.
 
 The installer checks the parent password it is given, but a parent can later change or reset it
 with `passwd` (or `sudo passwd`). Those commands run the PAM "passwd" service, so the rules are

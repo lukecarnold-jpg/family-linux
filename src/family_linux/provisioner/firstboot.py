@@ -1,9 +1,9 @@
 """First boot on an installed Family Linux system: applies the full policy once.
 
-The autoinstall creates the accounts. This step runs the rest of the provisioning (firewall, DNS
-gateway, PAM and polkit rules, AppArmor, browser policy, desktop lockdown) after the system has
-booted, when systemd, the network and the account database are all available. A marker file stops
-it running again after a successful apply.
+The Debian installer (preseed and late command) creates the accounts. This step runs the rest of
+the provisioning (firewall, DNS gateway, PAM and polkit rules, AppArmor, browser policy, desktop
+lockdown) after the system has booted, when systemd, the network and the account database are all
+available. A marker file stops it running again after a successful apply.
 
 Run as: python3 -m family_linux.provisioner.firstboot [--policy FILE]
 """

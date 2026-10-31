@@ -1,9 +1,9 @@
-"""SHA-512 crypt for the autoinstall password hashes. Vectors were produced by glibc's crypt()
-(Ubuntu 24.04, Python 3.12), so the same hash works on Ubuntu's /etc/shadow."""
+"""SHA-512 crypt for the preseed and late-command password hashes. Vectors were produced by glibc's
+crypt() (Ubuntu 24.04, Python 3.12), so the same hash works on Debian's /etc/shadow."""
 
 import pytest
 
-from family_linux.provisioner.autoinstall import SubiquityAutoinstallGenerator
+from family_linux.provisioner.preseed import DebianPreseedGenerator
 from family_linux.provisioner.sha512crypt import sha512_crypt
 from family_linux.models import FamilyPolicy, ParentAccount
 
@@ -22,11 +22,11 @@ def test_matches_glibc(password, salt, prefix):
     assert full.startswith(prefix)
 
 
-def test_user_data_hashes_are_valid_sha512_crypt():
+def test_preseed_hashes_are_valid_sha512_crypt():
     policy = FamilyPolicy(parent=ParentAccount("parent", "Parent", password="Correct-Horse-42-Battery"))
-    text = SubiquityAutoinstallGenerator(policy).generate_user_data(locale="en_US.UTF-8", keyboard_layout="us")
-    line = next(l for l in text.splitlines() if l.strip().startswith("password:"))
-    stored = line.split("password:", 1)[1].strip()
+    text = DebianPreseedGenerator(policy).generate_preseed(locale="en_US.UTF-8", keyboard_layout="us")
+    line = next(l for l in text.splitlines() if l.startswith("d-i passwd/user-password-crypted password "))
+    stored = line.split(" password ", 1)[1].strip()
     salt = stored.split("$")[2]
     assert stored == sha512_crypt("Correct-Horse-42-Battery", salt)
     assert stored.startswith("$6$") and len(stored.split("$")[3]) == 86

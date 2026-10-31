@@ -150,7 +150,7 @@ The filter checks every connection a child's account makes, whichever browser th
 | Browser | Filter applies | Browser settings applied |
 |---|---|---|
 | Firefox (installed with Family Linux), Chromium, Google Chrome, Microsoft Edge, Brave from Brave's own website | Yes | Should be, but not yet checked on an installed system |
-| Brave from the App Centre | Yes | **No.** It cannot read the settings, so Family Linux keeps it hidden from children and it cannot be approved for them |
+| Brave from Brave's own repository, Firefox, Chromium | Yes | Should be, but not yet checked on an installed system |
 | Any other browser | Yes | No |
 
 If a browser shows nothing at all for your child, even allowed sites, the browser is probably using its own "secure DNS" setting. The filter refuses those connections on purpose, so nothing gets around it. Turn off secure DNS in that browser's settings, or use Firefox instead. To check, run this and look for "not returned by an allowed lookup":

@@ -181,25 +181,39 @@ def test_child_desktop_filters_do_not_confine_when_apparmor_inactive(tmp_path):
     assert not adapter.simulated_files
 
 
-def test_desktop_lockdown_sets_and_locks_terminal_entry_points():
+def test_desktop_lockdown_sets_the_plasma_kiosk_restrictions_for_every_account():
     from family_linux.security.desktop_lockdown import (
-        LOCKS_PATH, SETTINGS_PATH, DesktopLockdown, render_locks, render_settings,
+        KDEGLOBALS_PATH, LOCKED_RESTRICTIONS, DesktopLockdown, lockdown_in_place, with_lockdown,
     )
-
-    settings = render_settings()
-    assert "terminal=@as []" in settings
-    assert "disable-command-line=true" in settings
-
-    locks = render_locks()
-    assert "/org/gnome/settings-daemon/plugins/media-keys/terminal" in locks
-    assert "/org/gnome/desktop/lockdown/disable-command-line" in locks
 
     adapter = SystemAdapter(dry_run=True)
     warnings = DesktopLockdown(adapter).apply()
     assert warnings == []
-    assert adapter.simulated_files[str(SETTINGS_PATH)] == settings
-    assert adapter.simulated_files[str(LOCKS_PATH)] == locks
-    assert ["dconf", "update"] in adapter.executed_commands
+    written = adapter.simulated_files[str(KDEGLOBALS_PATH)]
+    assert "[KDE Action Restrictions][$i]" in written
+    for restriction in ("shell_access=false", "run_command=false", "action/run_command=false", "custom_config=false"):
+        assert restriction in written
+    assert lockdown_in_place(written)
+    assert written == with_lockdown("")
+    assert all(item in LOCKED_RESTRICTIONS for item in ("shell_access=false", "run_command=false"))
+
+
+def test_desktop_lockdown_keeps_the_rest_of_kdeglobals_and_applies_once():
+    from family_linux.security.desktop_lockdown import with_lockdown
+
+    distro = "[General]\nBrowserApplication=firefox-esr.desktop\n\n[KDE]\nLookAndFeelPackage=org.kde.breeze.desktop\n"
+    once = with_lockdown(distro)
+    assert "BrowserApplication=firefox-esr.desktop" in once and "LookAndFeelPackage=org.kde.breeze.desktop" in once
+    assert with_lockdown(once) == once  # applying again leaves one copy
+    assert once.count("[KDE Action Restrictions][$i]") == 1
+
+
+def test_desktop_lockdown_rewrites_a_block_that_has_drifted():
+    from family_linux.security.desktop_lockdown import lockdown_in_place, with_lockdown
+
+    drifted = with_lockdown("").replace("shell_access=false", "shell_access=true")
+    assert not lockdown_in_place(drifted)
+    assert lockdown_in_place(with_lockdown(drifted))
 
 
 def test_terminal_programs_are_blocked_for_children():
@@ -208,7 +222,7 @@ def test_terminal_programs_are_blocked_for_children():
     for tier_apps in DEFAULT_APPROVED_APPS.values():
         for app in tier_apps:
             assert app.lower() not in ALWAYS_BLOCKED_COMMANDS
-    for name in ("gnome-terminal", "org.gnome.terminal", "org.gnome.console", "xterm", "bash"):
+    for name in ("konsole", "org.kde.konsole", "yakuake", "xterm", "bash", "systemsettings"):
         assert name in ALWAYS_BLOCKED_COMMANDS
 
 

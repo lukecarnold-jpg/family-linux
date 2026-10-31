@@ -2,14 +2,14 @@
 
 ## Phase 0: Direction lock
 
-- confirm Ubuntu as base distribution and LTS support policy
-- confirm Ubuntu-standard security model language
+- confirm Debian stable with KDE Plasma as the base distribution and its support policy
+- confirm Debian-standard security model language
 - confirm one-parent/multi-child account model
 - keep repository private during design validation
 
 ## Phase 1: Baseline architecture
 
-- finalize Ubuntu-focused architecture and policy boundaries
+- finalize Debian-focused architecture and policy boundaries
 - define child-safe desktop baseline and app approval model
 - define parent management requirements and audit requirements
 - document installer requirements with recommended and advanced modes
@@ -23,7 +23,7 @@
 
 ## Phase 3: System prototype
 
-- produce first Ubuntu-based prototype image/build process
+- produce first Debian-based prototype image/build process
 - validate parent and child account flows on first boot
 - validate baseline safety defaults and rollback/recovery paths
 - evaluate operational maintenance workflow
@@ -51,7 +51,7 @@
 - parental administration CLI (`family-ctl`): complete
 - parental web control dashboard: complete
 - screen time and curfew daemon (`family-policyd`): complete
-- Ubuntu LTS autoinstall / Subiquity workflow: complete
+- Debian preseed and late-command install workflow (KDE Plasma): complete, in VirtualBox on arm64; hardware and amd64 not yet validated
 - automated test suite (pytest): complete (31 tests passing)
 - ISO build tooling: prototype complete
 - production-quality hardware validation: ongoing

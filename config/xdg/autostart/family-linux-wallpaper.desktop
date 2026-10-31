@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Family Linux wallpaper
+Comment=Sets the Family Linux wallpaper at the first login
+Exec=/usr/libexec/family-linux/family-linux-set-wallpaper
+NoDisplay=true
+X-KDE-autostart-phase=2

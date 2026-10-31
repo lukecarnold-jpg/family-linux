@@ -1,6 +1,6 @@
 """Family Linux core package.
 
-A child-safe Linux operating system baseline built on Ubuntu LTS,
+A child-safe Linux operating system baseline built on Debian stable with KDE Plasma,
 designed for one parent administrator and multiple child accounts.
 """
 

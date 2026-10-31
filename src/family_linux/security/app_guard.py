@@ -16,17 +16,10 @@ from family_linux.security import child_dirs
 from family_linux.security.apparmor import PROFILE_NAME
 from family_linux.audit.logger import AuditLogger
 
-# snapd exports the desktop entries of installed snaps here (Ubuntu adds it to XDG_DATA_DIRS).
-SNAP_DESKTOP_DIR = Path("/var/lib/snapd/desktop/applications")
-
-# Flatpak exports desktop entries for system-wide installs here.
-FLATPAK_DESKTOP_DIR = Path("/var/lib/flatpak/exports/share/applications")
-
+# Desktop entries from Debian packages (apt and PackageKit) and from locally installed software.
 SYSTEM_APP_DIRS = [
     Path("/usr/share/applications"),
     Path("/usr/local/share/applications"),
-    SNAP_DESKTOP_DIR,
-    FLATPAK_DESKTOP_DIR,
 ]
 
 # First line of every override this module writes. Files without it were not written here and
@@ -120,7 +113,6 @@ class AppGuard:
         confine: bool = False,
         home_root: Path = Path("/home"),
         app_dirs: Optional[List[Path]] = None,
-        snap_dir: Path = SNAP_DESKTOP_DIR,
     ) -> Tuple[int, int]:
         """Writes the child's ~/.local/share/applications overrides.
 
@@ -133,8 +125,8 @@ class AppGuard:
         if not self.adapter.dry_run and not self.adapter.is_root():
             return 0, 0
         if self.adapter.dry_run:
-            return self._apply_by_path(child, confine, home_root, app_dirs, snap_dir)
-        return self._apply_as_root(child, confine, home_root, app_dirs, snap_dir)
+            return self._apply_by_path(child, confine, home_root, app_dirs)
+        return self._apply_as_root(child, confine, home_root, app_dirs)
 
     def _apply_as_root(
         self,
@@ -142,7 +134,6 @@ class AppGuard:
         confine: bool,
         home_root: Path,
         app_dirs: Optional[List[Path]],
-        snap_dir: Path,
     ) -> Tuple[int, int]:
         """Real run as root. Every step goes through a descriptor opened with O_NOFOLLOW, so the
         child cannot make root write outside the child's own folders by replacing one with a link.
@@ -161,7 +152,7 @@ class AppGuard:
             # Only the overrides folder is locked. Lifted just while it is rewritten.
             child_dirs.set_immutable(dir_fd, False)
             try:
-                return self._write_child_overrides(child, _FdStore(dir_fd), confine, app_dirs, snap_dir)
+                return self._write_child_overrides(child, _FdStore(dir_fd), confine, app_dirs)
             finally:
                 if not child_dirs.set_immutable(dir_fd, True):
                     self.audit.log(
@@ -179,12 +170,11 @@ class AppGuard:
         confine: bool,
         home_root: Path,
         app_dirs: Optional[List[Path]],
-        snap_dir: Path,
     ) -> Tuple[int, int]:
         """Dry run and tests: the same decisions, recorded as commands and simulated files."""
         child_apps_dir = home_root / child.username / ".local/share/applications"
         self.adapter.run_command(["mkdir", "-p", str(child_apps_dir)])
-        # ~/.local and ~/.local/share belong to the child: GNOME and apps keep the Trash, keyring,
+        # ~/.local and ~/.local/share belong to the child: KDE and apps keep the Trash, keyring,
         # recent files and app data there. When root owned them, apps that save there failed for
         # children (seen: ibus-table crashed at login).
         local_dir = child_apps_dir.parent.parent
@@ -192,7 +182,7 @@ class AppGuard:
             self.adapter.run_command(["chown", f"{child.username}:", str(directory)])
         self.adapter.run_command(["chattr", "-i", str(child_apps_dir)])
         try:
-            return self._write_child_overrides(child, _PathStore(self, child_apps_dir), confine, app_dirs, snap_dir)
+            return self._write_child_overrides(child, _PathStore(self, child_apps_dir), confine, app_dirs)
         finally:
             self.adapter.run_command(["chattr", "+i", str(child_apps_dir)])
 
@@ -202,7 +192,6 @@ class AppGuard:
         store,
         confine: bool,
         app_dirs: Optional[List[Path]],
-        snap_dir: Path,
     ) -> Tuple[int, int]:
         hidden_count = 0
         confined_count = 0
@@ -221,9 +210,7 @@ class AppGuard:
                 )
                 store.write(name, override_content)
                 hidden_count += 1
-            elif confine and Path(app["file"]).parent != snap_dir:
-                # snapd already confines snap apps; wrapping them in aa-exec is not needed and
-                # could stop them from starting.
+            elif confine:
                 try:
                     source = Path(app["file"]).read_text(encoding="utf-8", errors="ignore")
                 except OSError:

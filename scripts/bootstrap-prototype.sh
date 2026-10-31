@@ -9,7 +9,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 echo "=============================================================="
 echo "                   FAMILY LINUX SYSTEM"
-echo "  Ubuntu LTS child-safe workstation with parent administration"
+echo "  Debian stable with KDE Plasma: child-safe workstation with parent administration"
 echo "=============================================================="
 
 # Ensure Python is available
@@ -33,7 +33,7 @@ Commands:
   policyd --one-shot Run a single curfew enforcement cycle
   verify            Verify system compliance against Family Linux security baseline
   test              Run the automated test suite with pytest
-  autoinstall FILE  Export Ubuntu Subiquity autoinstall user-data (needs PARENT_PASS env var)
+  preseed FILE      Export the Debian Installer preseed (and late-command.sh beside it) (needs PARENT_PASS env var)
 
 Examples:
   ./scripts/bootstrap-prototype.sh install --dry-run
@@ -66,12 +66,12 @@ case "$COMMAND" in
     test)
         python3 -m pytest "${PROJECT_ROOT}/tests" -v "$@"
         ;;
-    autoinstall)
-        OUT_FILE="${1:-autoinstall-user-data.yaml}"
+    preseed)
+        OUT_FILE="${1:-preseed.cfg}"
         : "${PARENT_PASS:?Set PARENT_PASS to the parent password (min 14 characters, with upper-case, lower-case, a number and a special character)}"
-        python3 -m family_linux.installer.wizard --non-interactive --export-autoinstall "$OUT_FILE" \
+        python3 -m family_linux.installer.wizard --non-interactive --export-preseed "$OUT_FILE" \
             --parent-pass "$PARENT_PASS"
-        echo "Ubuntu Subiquity autoinstall user-data generated at: $OUT_FILE"
+        echo "Debian preseed generated at: $OUT_FILE"
         ;;
     help|--help|-h)
         show_help

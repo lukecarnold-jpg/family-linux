@@ -302,7 +302,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <div class="header-bar">
       <div>
         <h1 class="page-title" id="page-heading">Parent Control Dashboard</h1>
-        <p class="page-desc">Ubuntu LTS child-safe workstation policy management</p>
+        <p class="page-desc">Debian stable child-safe workstation policy management</p>
       </div>
       <div>
         <button class="btn btn-primary" onclick="openAddChildModal()">+ Add Child Account</button>

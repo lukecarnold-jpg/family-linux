@@ -1,3 +1,3 @@
 #!/bin/sh
-# Family Controls, the parent's GNOME app, installed by the ISO.
-exec /usr/bin/python3 -m family_linux.gnome_app "$@"
+# Family Controls, the parent's KDE app, installed by the ISO.
+exec /usr/bin/python3 -m family_linux.kde_app "$@"

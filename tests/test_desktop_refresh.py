@@ -3,7 +3,7 @@
 from family_linux.config import PolicyConfigManager
 from family_linux.models import AppPolicy, ChildAccount, FamilyPolicy, ParentAccount
 from family_linux.security.adapter import SystemAdapter
-from family_linux.security.app_guard import FLATPAK_DESKTOP_DIR, SNAP_DESKTOP_DIR
+from family_linux.security.app_guard import SYSTEM_APP_DIRS
 from family_linux.security.desktop_refresh import (
     WATCHED_DIRS,
     refresh,
@@ -14,10 +14,10 @@ from family_linux.security.desktop_refresh import (
 
 def test_path_unit_watches_every_install_location_and_starts_the_refresh_service():
     unit = render_path_unit()
-    for directory in (SNAP_DESKTOP_DIR, FLATPAK_DESKTOP_DIR, "/usr/share/applications"):
+    for directory in ("/usr/share/applications", "/usr/local/share/applications"):
         assert f"PathChanged={directory}" in unit
     assert "Unit=family-appguard.service" in unit
-    assert len(WATCHED_DIRS) == 3
+    assert list(WATCHED_DIRS) == list(SYSTEM_APP_DIRS)
 
 
 def test_service_unit_runs_the_module_with_the_installing_interpreter():

@@ -1,6 +1,6 @@
-"""SHA-512 crypt ($6$), as used by /etc/shadow on Ubuntu.
+"""SHA-512 crypt ($6$), as used by /etc/shadow on Debian.
 
-Python 3.13 removed the crypt module, so the autoinstall needs its own implementation. It follows
+Python 3.13 removed the crypt module, so the preseed generator needs its own implementation. It follows
 Drepper's SHA-crypt specification, and tests check it against glibc's crypt() where available.
 """
 

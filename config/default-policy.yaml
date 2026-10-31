@@ -28,7 +28,7 @@ child_defaults:
   app_allow_list: true
 
 security:
-  distro_base: ubuntu_lts
+  distro_base: debian_stable
   privilege_model: unix_users_groups
   admin_escalation: sudo_for_parent_only
   apparmor: where_applicable

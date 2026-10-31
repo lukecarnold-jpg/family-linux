@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Family Linux VirtualBox appliance builder.
+# Family Linux VirtualBox appliance builder (Debian stable with KDE Plasma).
 #
 # Builds the install ISO, creates a VirtualBox VM, installs Family Linux unattended and headless,
 # waits for the first-boot apply, then exports an .ova that can be imported with
@@ -9,7 +9,7 @@ set -euo pipefail
 #
 # Architecture: arm64 on Apple silicon (VirtualBox 7.2 or later), amd64 elsewhere. Override with ARCH.
 #
-# Required: VirtualBox (VBoxManage), PARENT_PASS, and what scripts/build-autoinstall-iso.sh needs.
+# Required: VirtualBox (VBoxManage), PARENT_PASS, and what scripts/build-debian-iso.sh needs.
 # Optional: VM_NAME (default "Family Linux"), CHILD_SPECS, TIMEZONE, MEMORY_MB (4096), CPUS (2),
 #           DISK_MB (40960), TIMEOUT_MIN (90), SKIP_ISO=1 to reuse an existing ISO.
 #
@@ -27,8 +27,8 @@ case "$(uname -m)" in
 esac
 ARCH="${ARCH:-$DEFAULT_ARCH}"
 case "$ARCH" in
-    arm64) PLATFORM=arm; OSTYPE=Ubuntu24_LTS_arm64; GRAPHICS=qemuramfb ;;
-    amd64) PLATFORM=x86; OSTYPE=Ubuntu24_LTS_64;    GRAPHICS=vmsvga ;;
+    arm64) PLATFORM=arm; OSTYPE=Debian_arm64; GRAPHICS=qemuramfb ;;
+    amd64) PLATFORM=x86; OSTYPE=Debian_64;    GRAPHICS=vmsvga ;;
     *) echo "ARCH must be arm64 or amd64 (got '$ARCH')" >&2; exit 2 ;;
 esac
 
@@ -37,8 +37,8 @@ MEMORY_MB="${MEMORY_MB:-4096}"
 CPUS="${CPUS:-2}"
 DISK_MB="${DISK_MB:-40960}"
 TIMEOUT_MIN="${TIMEOUT_MIN:-90}"
-ISO="${OUTPUT_DIR}/family-linux-ubuntu-24.04-${ARCH}.iso"
-OVA="${OUTPUT_DIR}/family-linux-ubuntu-24.04-${ARCH}.ova"
+ISO="${OUTPUT_DIR}/family-linux-debian-stable-${ARCH}.iso"
+OVA="${OUTPUT_DIR}/family-linux-debian-stable-${ARCH}.ova"
 SERIAL_LOG="${BUILD_DIR}/vbox-${ARCH}-serial.log"
 
 command -v VBoxManage >/dev/null || { echo "VBoxManage not found; install VirtualBox 7.2 or later." >&2; exit 2; }
@@ -54,7 +54,7 @@ mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
 if [ "${SKIP_ISO:-0}" = 1 ] && [ -f "$ISO" ]; then
     echo "Reusing ${ISO}"
 else
-    ARCH="$ARCH" "${SCRIPT_DIR}/build-autoinstall-iso.sh"
+    ARCH="$ARCH" "${SCRIPT_DIR}/build-debian-iso.sh"
 fi
 
 # 2. VM: ${ARCH}, EFI, VirtIO disk and network, serial output to a log so the build can follow it
@@ -76,6 +76,13 @@ VBoxManage storageattach "$VM_NAME" --storagectl VirtIO --port 1 --device 0 --ty
 # 3. Unattended install, reboot, and first-boot apply
 echo "Installing (headless). Progress: ${SERIAL_LOG}"
 VBoxManage startvm "$VM_NAME" --type headless >/dev/null
+# The boot menu waits for Enter on "Install" (the ISO never starts an install by itself). Press Enter
+# until the kernel's banner shows on the serial log, which means the menu has been passed.
+for _ in 1 2 3 4 5 6; do
+    sleep 20
+    grep -aq "Linux version" "$SERIAL_LOG" 2>/dev/null && break
+    VBoxManage controlvm "$VM_NAME" keyboardputscancode 1c 9c >/dev/null 2>&1 || true
+done
 deadline=$(( $(date +%s) + TIMEOUT_MIN * 60 ))
 result=""
 while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -106,7 +113,7 @@ VBoxManage modifyvm "$VM_NAME" --uart1 off
 
 echo "Exporting ${OVA}..."
 VBoxManage export "$VM_NAME" -o "$OVA" \
-    --vsys 0 --product "Family Linux" --version "Ubuntu 24.04 LTS (${ARCH})" \
+    --vsys 0 --product "Family Linux" --version "Debian stable with KDE Plasma (${ARCH})" \
     --description "Family Linux: one parent administrator, restricted child accounts. Policy applied on first boot."
 echo "Built: ${OVA} ($(du -h "$OVA" | awk '{print $1}'))"
 echo "Import with: VBoxManage import \"${OVA}\"  (or File > Import Appliance in VirtualBox)"
