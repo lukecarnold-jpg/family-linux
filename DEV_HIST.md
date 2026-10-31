@@ -613,6 +613,8 @@ Request from the user: act on the review's list, starting with item 1.
 | VM install, arm64, VirtualBox 7.2.20 (second run, package list fixed) | The package stage completed. The late command ran. First boot printed `First-boot provisioning complete: 24 actions` and no apply warnings. The VM reached `family-linux login:` |
 | VM: `smartmontools` | Failed to start (`[FAILED] Failed to start smartmontools.service`). Not investigated. Not expected to matter on a virtual disk |
 
+**CI.** Pull request #7 (`debian-kde` into `main`) was opened to run the workflow, which triggers only on pull requests into `main`. All 13 jobs passed: unit tests on Python 3.9 to 3.13 on Ubuntu and macOS, the privileged Linux integration job, the live-apply job on the Ubuntu runner, and the amd64 ISO build and check. These jobs do not install Debian. The arm64 install was checked in VirtualBox only.
+
 **Not verified yet.** Each item below is also in the open items.
 
 - Child sign-in at SDDM with a nologin shell. The child is not yet confirmed to appear on the login screen or to start a Plasma session.

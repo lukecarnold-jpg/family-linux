@@ -196,7 +196,7 @@ Repository status (checked with `gh` on 2026-11-01):
 
 - Default branch: `main`, which now includes PR #6 (`arm64-iso`, merged). CI runs on pushes to `main` and on pull requests into `main`.
 - Working branch: `debian-kde`, based on `main`. It has no CI until a pull request into `main` is open.
-- Open pull requests: none at the time of writing.
+- Open pull requests: [#7](https://github.com/lukecarnold-jpg/family-linux/pull/7) (`debian-kde` into `main`). Its CI run passed all 13 jobs: unit tests on Python 3.9 to 3.13 on Ubuntu and macOS, the privileged Linux integration job, the live-apply job, and the amd64 ISO build and check. The CI jobs do not install Debian; the arm64 install was checked in VirtualBox.
 
 Design documents:
 
