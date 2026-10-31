@@ -12,6 +12,7 @@ from typing import List, Dict, Optional, Set, Tuple
 
 from family_linux.models import ChildAccount, ALWAYS_BLOCKED_COMMANDS
 from family_linux.security.adapter import SystemAdapter
+from family_linux.security import child_dirs
 from family_linux.security.apparmor import PROFILE_NAME
 from family_linux.audit.logger import AuditLogger
 
@@ -129,18 +130,86 @@ class AppGuard:
 
         Returns (hidden, confined) counts.
         """
-        child_apps_dir = home_root / child.username / ".local/share/applications"
         if not self.adapter.dry_run and not self.adapter.is_root():
             return 0, 0
+        if self.adapter.dry_run:
+            return self._apply_by_path(child, confine, home_root, app_dirs, snap_dir)
+        return self._apply_as_root(child, confine, home_root, app_dirs, snap_dir)
 
+    def _apply_as_root(
+        self,
+        child: ChildAccount,
+        confine: bool,
+        home_root: Path,
+        app_dirs: Optional[List[Path]],
+        snap_dir: Path,
+    ) -> Tuple[int, int]:
+        """Real run as root. Every step goes through a descriptor opened with O_NOFOLLOW, so the
+        child cannot make root write outside the child's own folders by replacing one with a link.
+        """
+        try:
+            dir_fd = child_dirs.open_overrides_dir(home_root, child.username, child_dirs.child_owner(child.username), create=True)
+        except OSError as exc:
+            self.audit.log(
+                event_type="APP_OVERRIDES_REFUSED",
+                user=child.username,
+                severity="WARNING",
+                details={"reason": "override folder is not a plain folder", "error": str(exc)},
+            )
+            return 0, 0
+        try:
+            # Only the overrides folder is locked. Lifted just while it is rewritten.
+            child_dirs.set_immutable(dir_fd, False)
+            try:
+                return self._write_child_overrides(child, _FdStore(dir_fd), confine, app_dirs, snap_dir)
+            finally:
+                if not child_dirs.set_immutable(dir_fd, True):
+                    self.audit.log(
+                        event_type="APP_OVERRIDES_UNLOCKED",
+                        user=child.username,
+                        severity="WARNING",
+                        details={"reason": "chattr +i failed; hidden apps can be deleted"},
+                    )
+        finally:
+            os.close(dir_fd)
+
+    def _apply_by_path(
+        self,
+        child: ChildAccount,
+        confine: bool,
+        home_root: Path,
+        app_dirs: Optional[List[Path]],
+        snap_dir: Path,
+    ) -> Tuple[int, int]:
+        """Dry run and tests: the same decisions, recorded as commands and simulated files."""
+        child_apps_dir = home_root / child.username / ".local/share/applications"
         self.adapter.run_command(["mkdir", "-p", str(child_apps_dir)])
+        # ~/.local and ~/.local/share belong to the child: GNOME and apps keep the Trash, keyring,
+        # recent files and app data there. When root owned them, apps that save there failed for
+        # children (seen: ibus-table crashed at login).
+        local_dir = child_apps_dir.parent.parent
+        for directory in (local_dir, local_dir / "share"):
+            self.adapter.run_command(["chown", f"{child.username}:", str(directory)])
+        self.adapter.run_command(["chattr", "-i", str(child_apps_dir)])
+        try:
+            return self._write_child_overrides(child, _PathStore(self, child_apps_dir), confine, app_dirs, snap_dir)
+        finally:
+            self.adapter.run_command(["chattr", "+i", str(child_apps_dir)])
 
+    def _write_child_overrides(
+        self,
+        child: ChildAccount,
+        store,
+        confine: bool,
+        app_dirs: Optional[List[Path]],
+        snap_dir: Path,
+    ) -> Tuple[int, int]:
         hidden_count = 0
         confined_count = 0
         discovered_ids = set()
         for app in self.discover_system_apps(app_dirs):
             discovered_ids.add(app["id"])
-            override_file = child_apps_dir / f"{app['id']}.desktop"
+            name = f"{app['id']}.desktop"
             if not self.is_app_allowed(child, app["id"]):
                 override_content = (
                     f"{MANAGED_MARKER}\n"
@@ -150,7 +219,7 @@ class AppGuard:
                     "NoDisplay=true\n"
                     "Hidden=true\n"
                 )
-                self.adapter.write_system_file(override_file, override_content, mode=0o644)
+                store.write(name, override_content)
                 hidden_count += 1
             elif confine and Path(app["file"]).parent != snap_dir:
                 # snapd already confines snap apps; wrapping them in aa-exec is not needed and
@@ -159,27 +228,59 @@ class AppGuard:
                     source = Path(app["file"]).read_text(encoding="utf-8", errors="ignore")
                 except OSError:
                     continue
-                self.adapter.write_system_file(
-                    override_file, f"{MANAGED_MARKER}\n" + confine_desktop_entry(source), mode=0o644
-                )
+                store.write(name, f"{MANAGED_MARKER}\n" + confine_desktop_entry(source))
                 confined_count += 1
             else:
                 # Approved and not confined. An override written while the app was unapproved would
                 # keep it hidden, so remove it. Overrides not written here are kept.
-                self._remove_managed_override(override_file)
+                store.remove_managed(name)
 
         # Apps that are no longer installed: their hidden overrides are not needed any more.
-        if child_apps_dir.exists():
-            for leftover in child_apps_dir.glob("*.desktop"):
-                if leftover.stem not in discovered_ids:
-                    self._remove_managed_override(leftover)
+        for leftover in store.names():
+            if Path(leftover).stem not in discovered_ids:
+                store.remove_managed(leftover)
 
         return hidden_count, confined_count
 
-    def _remove_managed_override(self, override_file: Path) -> None:
+
+class _PathStore:
+    """Overrides by path, through the adapter. Used in dry runs and tests."""
+
+    def __init__(self, guard: "AppGuard", directory: Path):
+        self.guard = guard
+        self.directory = directory
+
+    def write(self, name: str, content: str) -> None:
+        self.guard.adapter.write_system_file(self.directory / name, content, mode=0o644)
+
+    def remove_managed(self, name: str) -> None:
         """Removes an override only if this module wrote it. In dry run the removal is recorded."""
-        if override_file.exists() and is_managed_override(override_file.read_text(encoding="utf-8", errors="ignore")):
-            self.adapter.remove_system_file(override_file)
+        path = self.directory / name
+        if path.exists() and is_managed_override(path.read_text(encoding="utf-8", errors="ignore")):
+            self.guard.adapter.remove_system_file(path)
+
+    def names(self) -> List[str]:
+        if not self.directory.exists():
+            return []
+        return [p.name for p in self.directory.glob("*.desktop")]
+
+
+class _FdStore:
+    """Overrides through a descriptor opened with O_NOFOLLOW. Used for real runs as root."""
+
+    def __init__(self, dir_fd: int):
+        self.dir_fd = dir_fd
+
+    def write(self, name: str, content: str) -> None:
+        child_dirs.write_file(self.dir_fd, name, content, mode=0o644)
+
+    def remove_managed(self, name: str) -> None:
+        content = child_dirs.read_file(self.dir_fd, name)
+        if content is not None and is_managed_override(content):
+            child_dirs.remove_file(self.dir_fd, name)
+
+    def names(self) -> List[str]:
+        return child_dirs.list_desktop_files(self.dir_fd)
 
 
 AA_EXEC_PREFIX = f"aa-exec -p {PROFILE_NAME} -- "

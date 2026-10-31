@@ -305,3 +305,58 @@ def test_relay_survives_an_idle_pause_longer_than_the_connect_timeout(tmp_path, 
     assert client_end.recv(64) == b"LATE-REPLY"
     client_end.close()
     worker.join(timeout=5)
+
+
+# --- fallback to another allowed address ---------------------------------------
+
+def test_name_addresses_expire_and_are_normalised():
+    now = [0.0]
+    store = tp.LearnedNameAddresses(clock=lambda: now[0])
+    store.remember("Example.org.", "2001:db8:0::1", 60)
+    store.remember("example.org", "93.184.216.34", 600)
+    assert sorted(store.addresses("example.org")) == ["2001:db8::1", "93.184.216.34"]
+    now[0] = 120
+    assert store.addresses("EXAMPLE.ORG") == ["93.184.216.34"]
+
+
+def test_candidates_try_the_other_family_first_and_only_allowed_addresses():
+    addr, nm = stores(["2001:db8::1", "2001:db8::2", "93.184.216.34"], ["example.org"])
+    names = tp.LearnedNameAddresses()
+    for a in ("2001:db8::1", "2001:db8::2", "93.184.216.34", "198.51.100.7"):
+        names.remember("example.org", a, 300)
+    ctx = tp.ProxyContext(username="kid", rules=DomainRules([], []), learned_addresses=addr,
+                          learned_names=nm, log=None, name_addresses=names)
+    # 198.51.100.7 was never returned by an allowed lookup for this child, so it is not tried
+    assert tp.connection_candidates("2001:db8::1", "example.org", ctx) == ["2001:db8::1", "93.184.216.34", "2001:db8::2"]
+    assert tp.connection_candidates("2001:db8::1", None, ctx) == ["2001:db8::1"]
+
+
+def test_unreachable_ipv6_falls_back_to_the_names_ipv4_address(tmp_path, monkeypatch):
+    # The case found with Brave in VirtualBox: an IPv6 route exists but the network cannot reach
+    # the site. The browser's connection was already accepted, so it cannot fall back by itself.
+    origin, received, thread = _serve_once(b"SERVER-HELLO")
+    proxy_end, client_end = _proxy_pair(monkeypatch, ("2001:db8::1", 443))
+    addr, nm = stores(["2001:db8::1", "127.0.0.1"], ["example.org"])
+    names = tp.LearnedNameAddresses()
+    names.remember("example.org", "2001:db8::1", 300)
+    names.remember("example.org", "127.0.0.1", 300)
+    tried = []
+
+    def connect(target, timeout):
+        tried.append(target[0])
+        if ":" in target[0]:
+            raise OSError(113, "No route to host")
+        return socket.create_connection(origin, timeout=timeout)
+
+    ctx = tp.ProxyContext(username="kid", rules=DomainRules([], []), learned_addresses=addr, learned_names=nm,
+                          log=RequestLog(tmp_path / "requests.json"), name_addresses=names, connect=connect)
+    worker = threading.Thread(target=tp.handle_connection, args=(proxy_end, ctx), daemon=True)
+    worker.start()
+    client_end.sendall(client_hello(sni="example.org"))
+    client_end.settimeout(3)
+    assert client_end.recv(64) == b"SERVER-HELLO"
+    assert tried == ["2001:db8::1", "127.0.0.1"]
+    thread.join(timeout=3)
+    assert received and received[0].startswith(b"\x16\x03\x01")
+    client_end.close()
+    worker.join(timeout=3)

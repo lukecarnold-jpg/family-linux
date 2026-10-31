@@ -7,6 +7,7 @@ web filtering, audit logs, and security verification.
 from __future__ import annotations
 
 import argparse
+import json
 import platform
 import subprocess
 import sys
@@ -27,10 +28,12 @@ from family_linux.provisioner.system import SystemProvisioner
 from family_linux.screentime.tracker import ScreenTimeTracker
 from family_linux.audit.logger import AuditLogger
 from family_linux.security.adapter import SystemAdapter
+from family_linux.security.app_guard import AppGuard
 from family_linux.security.apparmor import PROFILE_PATH
-from family_linux.security.browser import CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
+from family_linux.security.browser import BRAVE_POLICY_PATH, CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
 from family_linux.security.password_policy import PAM_PASSWD_PATH, block_in_place
 from family_linux.security.snap_policy import SnapInstallGate
+from family_linux.security.release_upgrades import RELEASE_UPGRADES_PATH, prompt_is_off
 from family_linux.security.users import SUDOERS_FILE
 from family_linux.security.dns_gateway import clear_request, load_requests
 from family_linux.security.web_gateway import REQUESTS_PATH
@@ -72,6 +75,19 @@ class FamilyCtl:
         self.audit = AuditLogger(dry_run=dry_run)
         self.provisioner = SystemProvisioner(adapter=self.adapter, config_manager=self.config_manager, audit_logger=self.audit)
         self.tracker = ScreenTimeTracker(dry_run=dry_run)
+
+    def cmd_state(self) -> None:
+        """Prints the current state as JSON for the GNOME app: policy (no passwords), pending web
+        requests, today's screen time, and the apps installed on the system."""
+        policy = self.config_manager.load_policy()
+        apps = [{"id": a["id"], "name": a["name"]} for a in AppGuard(self.adapter, self.audit).discover_system_apps()]
+        state = {
+            "policy": policy.to_dict(),
+            "requests": load_requests(REQUESTS_PATH),
+            "usage_today": {c.username: self.tracker.get_minutes_used(c.username) for c in policy.children},
+            "apps": apps,
+        }
+        print(json.dumps(state, indent=2, sort_keys=True))
 
     def cmd_status(self) -> None:
         policy = self.config_manager.load_policy()
@@ -126,6 +142,9 @@ class FamilyCtl:
             print(format_table(headers, rows))
 
         elif args.user_action == "add":
+            if getattr(args, "password_stdin", False):
+                # Keeps the password out of the process list (used by the GNOME app).
+                args.password = sys.stdin.readline().rstrip("\n")
             if args.password is not None and len(args.password) < MIN_PASSWORD_LENGTH:
                 print(f"[ERROR] Password must be at least {MIN_PASSWORD_LENGTH} characters.")
                 sys.exit(1)
@@ -298,6 +317,15 @@ class FamilyCtl:
             self.provisioner.apply_policy(policy, reason=f"Allowed domain {args.domain}")
             print(f"[OK] Allowed '{args.domain}' for {self._describe(targets)}.")
 
+        elif args.web_action == "remove":
+            targets = self._web_targets(policy, args.child)
+            for c in targets:
+                for rules in (c.web_filter.blocked_domains, c.web_filter.allowed_domains):
+                    if args.domain in rules:
+                        rules.remove(args.domain)
+            self.provisioner.apply_policy(policy, reason=f"Removed web rule {args.domain}")
+            print(f"[OK] Removed rules for '{args.domain}' for {self._describe(targets)}.")
+
         elif args.web_action == "requests":
             requests = load_requests(REQUESTS_PATH)
             rows = []
@@ -411,11 +439,13 @@ class FamilyCtl:
                 "UFW active with deny incoming",
                 "Firefox managed policy installed",
                 "Chromium managed policy installed",
+                "Brave managed policy installed",
                 "AppArmor child profile loaded in enforce mode",
                 "Unattended security updates enabled",
                 "Parent password rules enforced by PAM",
                 "Snap installs need the parent's password (polkit rule)",
                 "System time zone matches the policy",
+                "New-release upgrade notice off",
             ):
                 skip(name, "live check runs only on Linux")
         else:
@@ -435,7 +465,7 @@ class FamilyCtl:
             ufw_ok = bool(ufw and ufw.returncode == 0 and "Status: active" in ufw.stdout and "deny (incoming)" in ufw.stdout)
             record("UFW active with deny incoming", ufw_ok, "ufw status verbose" if ufw else "ufw not installed")
 
-            for label, path in (("Firefox", FIREFOX_POLICY_PATH), ("Chromium", CHROMIUM_POLICY_PATH)):
+            for label, path in (("Firefox", FIREFOX_POLICY_PATH), ("Chromium", CHROMIUM_POLICY_PATH), ("Brave", BRAVE_POLICY_PATH)):
                 record(f"{label} managed policy installed", path.exists(), str(path))
 
             # Loaded and enforcing, as reported by the kernel, not just present on disk.
@@ -469,6 +499,9 @@ class FamilyCtl:
                 record("System time zone matches the policy", system_tz == policy.timezone, f"system {system_tz}, policy {policy.timezone}")
             else:
                 record("System time zone matches the policy", True, f"no time zone in the policy; system uses {system_tz}")
+
+            upgrades = RELEASE_UPGRADES_PATH.read_text(encoding="utf-8") if RELEASE_UPGRADES_PATH.exists() else ""
+            record("New-release upgrade notice off", prompt_is_off(upgrades), f"{RELEASE_UPGRADES_PATH}: Prompt=never")
 
             snap_gate = SnapInstallGate()
             record(
@@ -506,6 +539,7 @@ def main() -> None:
 
     # status
     subparsers.add_parser("status", help="Show system status and child account limits")
+    subparsers.add_parser("state", help="Print the current state as JSON (used by the GNOME app)")
 
     # verify
     subparsers.add_parser("verify", help="Audit security baseline compliance")
@@ -519,7 +553,9 @@ def main() -> None:
     add_p.add_argument("username", help="Child username")
     add_p.add_argument("--name", help="Child full name")
     add_p.add_argument("--tier", choices=["young_child", "pre_teen", "teen"], default="pre_teen", help="Age preset tier")
-    add_p.add_argument("--password", help="Account password")
+    add_pw = add_p.add_mutually_exclusive_group()
+    add_pw.add_argument("--password", help="Account password (visible to other processes; prefer --password-stdin)")
+    add_pw.add_argument("--password-stdin", action="store_true", help="Read the account password from standard input")
 
     dis_p = user_sp.add_parser("disable", help="Disable child login")
     dis_p.add_argument("username", help="Child username")
@@ -576,6 +612,10 @@ def main() -> None:
     web_alw_p.add_argument("domain", help="Domain name")
     web_alw_p.add_argument("--child", help="Only this child (default: all children)")
 
+    web_rm_p = web_sp.add_parser("remove", help="Remove a domain from a child's block and allow lists")
+    web_rm_p.add_argument("domain", help="Domain name")
+    web_rm_p.add_argument("--child", help="Only this child (default: all children)")
+
     web_sp.add_parser("requests", help="List blocked lookups waiting for a parent decision")
 
     web_apr_p = web_sp.add_parser("approve", help="Allow a requested domain for one child")
@@ -610,6 +650,8 @@ def main() -> None:
 
     if args.command == "status":
         ctl.cmd_status()
+    elif args.command == "state":
+        ctl.cmd_state()
     elif args.command == "verify":
         ctl.cmd_verify()
     elif args.command == "user":

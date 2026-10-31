@@ -20,6 +20,9 @@ from family_linux.security.adapter import SystemAdapter
 FIREFOX_POLICY_PATH = Path("/etc/firefox/policies/policies.json")
 CHROMIUM_POLICY_PATH = Path("/etc/chromium/policies/managed/family-policy.json")
 CHROME_POLICY_PATH = Path("/etc/opt/chrome/policies/managed/family-policy.json")
+# Other Chromium-based browsers read the same policy format from their own directory.
+BRAVE_POLICY_PATH = Path("/etc/brave/policies/managed/family-policy.json")
+EDGE_POLICY_PATH = Path("/etc/opt/edge/policies/managed/family-policy.json")
 
 
 class BrowserPolicyManager:
@@ -72,6 +75,17 @@ class BrowserPolicyManager:
 
         return policy
 
+    def generate_brave_policy(self, web_filter: WebFilterPolicy) -> Dict[str, Any]:
+        """Brave: the Chromium policy, plus no Tor windows.
+
+        Brave's private windows with Tor send traffic the gateway cannot check, so they are
+        turned off. Without this policy Brave also kept its own secure DNS, private windows and
+        developer tools for children.
+        """
+        policy = self.generate_chromium_policy(web_filter)
+        policy["TorDisabled"] = True
+        return policy
+
     def apply_browser_policies(self, web_filter: WebFilterPolicy) -> None:
         """Writes browser policies to their respective system directories."""
         # 1. Firefox
@@ -86,3 +100,8 @@ class BrowserPolicyManager:
         chrom_content = json.dumps(self.generate_chromium_policy(web_filter), indent=2)
         self.adapter.write_system_file(CHROMIUM_POLICY_PATH, chrom_content)
         self.adapter.write_system_file(CHROME_POLICY_PATH, chrom_content)
+        self.adapter.write_system_file(EDGE_POLICY_PATH, chrom_content)
+
+        # 3. Brave
+        brave_content = json.dumps(self.generate_brave_policy(web_filter), indent=2)
+        self.adapter.write_system_file(BRAVE_POLICY_PATH, brave_content)

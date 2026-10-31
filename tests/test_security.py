@@ -87,6 +87,22 @@ def test_browser_policy_generation():
     assert "URLBlocklist" not in chromium
     assert "WebsiteFilter" not in ff["policies"]
 
+    # Brave: same settings, its own secure DNS off, and no Tor windows (the gateway cannot check them)
+    brave = bp.generate_brave_policy(web_filter)
+    assert brave["DnsOverHttpsMode"] == "off" and brave["IncognitoModeAvailability"] == 1
+    assert brave["TorDisabled"] is True
+
+
+def test_browser_policies_are_written_for_every_supported_browser():
+    from family_linux.security.browser import (
+        BRAVE_POLICY_PATH, CHROME_POLICY_PATH, CHROMIUM_POLICY_PATH, EDGE_POLICY_PATH, FIREFOX_POLICY_PATH,
+    )
+
+    adapter = SystemAdapter(dry_run=True)
+    BrowserPolicyManager(adapter).apply_browser_policies(WebFilterPolicy())
+    for path in (FIREFOX_POLICY_PATH, CHROMIUM_POLICY_PATH, CHROME_POLICY_PATH, EDGE_POLICY_PATH, BRAVE_POLICY_PATH):
+        assert str(path) in adapter.simulated_files
+
 
 def test_app_guard_blocks_blacklisted_and_unapproved():
     adapter = SystemAdapter(dry_run=True)

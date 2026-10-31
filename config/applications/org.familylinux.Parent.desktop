@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Family Controls
+Comment=Manage children's accounts, screen time, websites and apps
+Exec=family-linux-parent
+Icon=system-users
+Terminal=false
+Categories=Settings;System;
+Keywords=parental;controls;children;screen time;family;
+StartupNotify=true

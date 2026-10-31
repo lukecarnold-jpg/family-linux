@@ -383,6 +383,7 @@ class ChildResolver:
         learned_addresses=None,
         learned_names=None,
         learned_ech=None,
+        learned_name_addresses=None,
     ):
         self.username = username
         self.rules = rules
@@ -396,6 +397,8 @@ class ChildResolver:
         self.learned_addresses = learned_addresses
         self.learned_names = learned_names
         self.learned_ech = learned_ech
+        # Each name's addresses, so the proxy can try another when one cannot be reached.
+        self.learned_name_addresses = learned_name_addresses
 
     def answer(self, query: bytes, tcp: bool = False) -> bytes:
         try:
@@ -427,6 +430,9 @@ class ChildResolver:
                     self.learned_addresses.remember(address, ttl)
             if self.learned_names is not None:
                 self.learned_names.remember(name, ttl)
+            if self.learned_name_addresses is not None:
+                for address, _ in addresses[:MAX_ADDRESSES_PER_ANSWER]:
+                    self.learned_name_addresses.remember(name, address, ttl)
         if self.learned_ech is not None:
             for config_id, ech_ttl in parse_answer_ech_config_ids(reply):
                 self.learned_ech.remember(str(config_id), max(min(ech_ttl, MAX_ALLOW_SECONDS), MIN_ALLOW_SECONDS))
@@ -496,6 +502,7 @@ def run(config: dict) -> None:
         learned_addresses = tls_proxy.LearnedAddresses()
         learned_names = tls_proxy.LearnedNames()
         learned_ech = tls_proxy.LearnedEchConfigs()
+        name_addresses = tls_proxy.LearnedNameAddresses()
         resolver = ChildResolver(
             username=child["username"],
             rules=rules,
@@ -506,6 +513,7 @@ def run(config: dict) -> None:
             learned_addresses=learned_addresses,
             learned_names=learned_names,
             learned_ech=learned_ech,
+            learned_name_addresses=name_addresses,
         )
         ctx = None
         if child.get("tls_port") is not None:
@@ -515,6 +523,7 @@ def run(config: dict) -> None:
                 learned_addresses=learned_addresses,
                 learned_names=learned_names,
                 learned_ech=learned_ech,
+                name_addresses=name_addresses,
                 log=log,
             )
         # Redirected IPv6 traffic lands on ::1, so every service listens on both loopbacks.
