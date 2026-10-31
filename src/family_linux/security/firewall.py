@@ -1,6 +1,6 @@
 """Firewall configuration and management for Family Linux.
 
-Configures Ubuntu UFW (Uncomplicated Firewall) with conservative defaults:
+Configures UFW (Uncomplicated Firewall) with conservative defaults:
 - Deny all incoming connections
 - Allow standard outbound connections
 - Block legacy insecure ports (Telnet, SMB, NetBIOS)
@@ -14,7 +14,7 @@ from family_linux.security.adapter import SystemAdapter
 
 
 class FirewallManager:
-    """Configures and validates UFW firewall rules on Ubuntu."""
+    """Configures and validates UFW firewall rules on Debian."""
 
     def __init__(self, adapter: Optional[SystemAdapter] = None):
         self.adapter = adapter or SystemAdapter()

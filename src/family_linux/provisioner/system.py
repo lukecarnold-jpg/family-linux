@@ -1,7 +1,7 @@
 """System provisioning and configuration application engine for Family Linux.
 
 Orchestrates user management, sudoers policy, firewall, DNS filter,
-browser configuration, AppArmor, and desktop menu restrictions.
+browser configuration, AppArmor, PackageKit install gate, and desktop menu restrictions.
 """
 
 from __future__ import annotations
@@ -17,8 +17,7 @@ from family_linux.security.dns_filter import DNSFilterManager
 from family_linux.security.browser import BrowserPolicyManager
 from family_linux.security.apparmor import AppArmorManager
 from family_linux.security.password_policy import ParentPasswordRules
-from family_linux.security.snap_policy import SnapInstallGate
-from family_linux.security.release_upgrades import disable_release_upgrade_prompt
+from family_linux.security.package_gate import PackageInstallGate
 from family_linux.security.desktop_refresh import PATH_UNIT_NAME, WATCHED_DIRS, PATH_UNIT_PATH, SERVICE_UNIT_PATH, render_path_unit, render_service_unit
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.desktop_lockdown import DesktopLockdown
@@ -51,7 +50,7 @@ class SystemProvisioner:
         self.browser = BrowserPolicyManager(self.adapter)
         self.apparmor = AppArmorManager(self.adapter)
         self.parent_password_rules = ParentPasswordRules(self.adapter)
-        self.snap_gate = SnapInstallGate(self.adapter)
+        self.package_gate = PackageInstallGate(self.adapter)
         self.app_guard = AppGuard(self.adapter, self.audit)
         self.web_gateway = WebGateway(self.adapter)
 
@@ -128,10 +127,10 @@ class SystemProvisioner:
             results["warnings"].append(warning)
         results["actions"].append(f"Parent password rules ({MIN_PARENT_PASSWORD_LENGTH}+ chars, mixed classes) enforced on password changes")
 
-        # Snap store: snapd installed; every child install, update or removal needs the parent's password
-        for warning in self.snap_gate.apply([child.username for child in policy.children]):
+        # Software: every install, removal or update by a child account needs the parent's password
+        for warning in self.package_gate.apply([child.username for child in policy.children]):
             results["warnings"].append(warning)
-        results["actions"].append("Snap installs for child accounts require the parent's password on every attempt")
+        results["actions"].append("Software changes by child accounts require the parent's password on every attempt")
 
         # Provision children
         for child in policy.children:
@@ -181,26 +180,20 @@ class SystemProvisioner:
                     "Could not enable unattended-upgrades (is the package installed?); security updates may not run"
                 )
 
-        # 6b2. No "new Ubuntu release" notice in any session (children's included); security
-        # updates above are unaffected.
-        disable_release_upgrade_prompt(self.adapter)
-        results["actions"].append("New-release upgrade notice turned off (security updates continue)")
-
-        # 6b3. The web browser. On Ubuntu 24.04 Firefox is a snap, and the apt package only installs it.
-        # Done here, not in the installer: the installer does not seed snaps, and snapd needs the
-        # network and a running daemon, which the first boot has.
-        if self.adapter.run_command(["snap", "list", "firefox"]).returncode != 0:
-            install = self.adapter.run_command(["snap", "install", "firefox"])
+        # 6b2. The web browser. The preseed installs firefox-esr; this only reinstalls it if it was
+        # removed, so children always have a browser that reads the managed policy.
+        if self.adapter.run_command(["dpkg", "-s", "firefox-esr"]).returncode != 0:
+            install = self.adapter.run_command(["apt-get", "install", "-y", "-q", "firefox-esr"])
             if install.returncode == 0:
-                results["actions"].append("Firefox installed (snap)")
+                results["actions"].append("Firefox ESR installed (apt)")
             else:
-                results["warnings"].append("Could not install Firefox (snap); children have no browser until it is installed")
+                results["warnings"].append("Could not install Firefox ESR; children have no browser until it is installed")
 
-        # 6c. Lock the desktop entry points that AppArmor cannot confine (terminal shortcut, Alt+F2)
+        # 6c. Lock the desktop entry points that AppArmor cannot confine (shell, Alt+F2 run dialog)
         if policy.children:
             for warning in DesktopLockdown(self.adapter).apply():
                 results["warnings"].append(warning)
-            results["actions"].append("Desktop lockdown applied (terminal shortcut and Alt+F2 command line locked)")
+            results["actions"].append("Desktop lockdown applied (Alt+F2 run dialog and shell access locked for every account)")
 
         # 7. Apply desktop launcher restrictions
         # Approved apps are launched through the confinement profile only when AppArmor is active;

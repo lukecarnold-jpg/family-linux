@@ -17,7 +17,13 @@ from typing import Dict, Any, Optional
 from family_linux.models import WebFilterPolicy
 from family_linux.security.adapter import SystemAdapter
 
-FIREFOX_POLICY_PATH = Path("/etc/firefox/policies/policies.json")
+# Firefox ESR (the Debian package). Firefox reads a policies.json from its own distribution folder,
+# and from /etc on Linux. All three copies are written; about:policies shows which one is in use.
+FIREFOX_POLICY_PATH = Path("/usr/lib/firefox-esr/distribution/policies.json")
+FIREFOX_ETC_POLICY_PATHS = [
+    Path("/etc/firefox/policies/policies.json"),
+    Path("/etc/firefox-esr/policies/policies.json"),
+]
 CHROMIUM_POLICY_PATH = Path("/etc/chromium/policies/managed/family-policy.json")
 CHROME_POLICY_PATH = Path("/etc/opt/chrome/policies/managed/family-policy.json")
 # Other Chromium-based browsers read the same policy format from their own directory.
@@ -88,13 +94,11 @@ class BrowserPolicyManager:
 
     def apply_browser_policies(self, web_filter: WebFilterPolicy) -> None:
         """Writes browser policies to their respective system directories."""
-        # 1. Firefox
+        # 1. Firefox ESR
         ff_content = json.dumps(self.generate_firefox_policy(web_filter), indent=2)
         self.adapter.write_system_file(FIREFOX_POLICY_PATH, ff_content)
-
-        # Also write to /usr/lib/firefox/distribution/policies.json if path exists
-        ff_usr_path = Path("/usr/lib/firefox/distribution/policies.json")
-        self.adapter.write_system_file(ff_usr_path, ff_content)
+        for path in FIREFOX_ETC_POLICY_PATHS:
+            self.adapter.write_system_file(path, ff_content)
 
         # 2. Chromium / Chrome
         chrom_content = json.dumps(self.generate_chromium_policy(web_filter), indent=2)

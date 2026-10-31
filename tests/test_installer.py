@@ -1,4 +1,4 @@
-"""Tests for Family Linux interactive installer and Subiquity autoinstall generator."""
+"""Tests for Family Linux interactive installer and the Debian preseed generator."""
 
 import itertools
 from pathlib import Path
@@ -7,7 +7,7 @@ import yaml
 
 from family_linux.models import ParentAccount, ChildAccount, FamilyPolicy, AgeTier
 from family_linux.installer.wizard import InstallerWizard
-from family_linux.provisioner.autoinstall import SubiquityAutoinstallGenerator
+from family_linux.provisioner.preseed import DebianPreseedGenerator
 
 
 def test_installer_wizard_validation_and_dry_run():
@@ -43,7 +43,7 @@ def test_installer_wizard_rejects_missing_parent():
         wizard.run_step_9_validation()
 
 
-def test_subiquity_autoinstall_generator():
+def test_debian_preseed_generator_writes_the_install_plan():
     parent = ParentAccount(
         username="parent",
         full_name="Family Admin",
@@ -53,23 +53,18 @@ def test_subiquity_autoinstall_generator():
     child = ChildAccount.create("alice", "Alice", password="ChildSecretPassword!")
     policy = FamilyPolicy(parent=parent, children=[child])
 
-    generator = SubiquityAutoinstallGenerator(policy)
-    yaml_text = generator.generate_user_data(hostname="family-desktop")
+    preseed = DebianPreseedGenerator(policy).generate_preseed(hostname="family-desktop")
+    assert "d-i netcfg/get_hostname string family-desktop" in preseed
+    assert "d-i passwd/username string parent" in preseed
+    assert "tasksel tasksel/first multiselect kde-desktop" in preseed
+    assert "ufw" in preseed.split("d-i pkgsel/include string ", 1)[1].split("\n", 1)[0].split()
+    assert "apparmor" in preseed.split("d-i pkgsel/include string ", 1)[1].split("\n", 1)[0].split()
 
-    assert yaml_text.startswith("#cloud-config")
-    # Parse YAML to verify validity
-    parsed = yaml.safe_load(yaml_text)
-    assert "autoinstall" in parsed
-    auto = parsed["autoinstall"]
-    assert auto["identity"]["username"] == "parent"
-    assert auto["identity"]["hostname"] == "family-desktop"
-    assert "ufw" in auto["packages"]
-    assert "apparmor" in auto["packages"]
-
-    # Verify late commands enforce group separation and ufw
-    late_cmds = auto["late-commands"]
-    assert any("family-children" in cmd for cmd in late_cmds)
-    assert any("ufw --force enable" in cmd for cmd in late_cmds)
+    # The late script enforces group separation, sudo for the parent only, and the firewall
+    late = DebianPreseedGenerator(policy).generate_late_script()
+    assert "family-children" in late
+    assert "%family-children ALL=(ALL:ALL) !ALL" in late
+    assert "in-target ufw --force enable" in late
 
 
 def test_non_interactive_install_rejects_weak_parent_password(monkeypatch, capsys):
@@ -88,13 +83,14 @@ def test_non_interactive_install_accepts_a_compliant_parent_password(monkeypatch
 
     out = tmp_path / "user-data"
     monkeypatch.setattr("sys.argv", [
-        "family-installer", "--dry-run", "--non-interactive", "--export-autoinstall", str(out),
+        "family-installer", "--dry-run", "--non-interactive", "--export-preseed", str(out),
         "--parent-pass", "Correct-Horse-42",
     ])
     with pytest.raises(SystemExit) as exc:
         wizard_module.main()
     assert exc.value.code == 0
     assert out.exists()
+    assert (out.parent / "late-command.sh").exists()
 
 
 def test_interactive_parent_step_retries_until_password_complies(monkeypatch):

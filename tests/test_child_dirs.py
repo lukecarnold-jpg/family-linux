@@ -128,7 +128,7 @@ def test_root_path_writes_hidden_overrides_and_refuses_a_linked_home(tmp_path):
     guard = AppGuard(RootAdapter(), audit)
 
     hidden, confined = guard.apply_child_desktop_filters(
-        _child(["vlc"]), home_root=home, app_dirs=[apps], snap_dir=tmp_path / "snap"
+        _child(["vlc"]), home_root=home, app_dirs=[apps]
     )
     assert (hidden, confined) == (1, 0)  # quake is hidden; vlc is approved and not confined
     overrides = home / "kid" / ".local" / "share" / "applications"

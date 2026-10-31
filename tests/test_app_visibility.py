@@ -6,9 +6,7 @@ from pathlib import Path
 from family_linux.models import AppPolicy, ChildAccount
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security.app_guard import (
-    FLATPAK_DESKTOP_DIR,
     MANAGED_MARKER,
-    SNAP_DESKTOP_DIR,
     SYSTEM_APP_DIRS,
     AppGuard,
     is_managed_override,
@@ -80,9 +78,9 @@ def test_legacy_hidden_template_is_recognised_as_ours():
     assert not is_managed_override("[Desktop Entry]\nName=Mine\nExec=mine\n")
 
 
-def test_system_and_snap_and_flatpak_exports_are_all_discovered():
-    assert SNAP_DESKTOP_DIR in SYSTEM_APP_DIRS
-    assert FLATPAK_DESKTOP_DIR in SYSTEM_APP_DIRS
+def test_debian_application_folders_are_discovered():
+    assert Path("/usr/share/applications") in SYSTEM_APP_DIRS
+    assert Path("/usr/local/share/applications") in SYSTEM_APP_DIRS
 
 
 def test_child_owns_local_and_share_and_the_overrides_folder_is_locked_after_writing(tmp_path):

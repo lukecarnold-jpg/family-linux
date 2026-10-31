@@ -1,0 +1,16 @@
+#!/bin/sh
+# Family Linux: sets the Family wallpaper for this account at its first Plasma login, installed by
+# the ISO. A marker stops it running again, so a later choice (for example the parent's, in System
+# Settings) is kept. With no image in config/wallpaper/, nothing happens and Plasma's own wallpaper stays.
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/family-linux"
+MARKER="$STATE/wallpaper-set"
+[ -e "$MARKER" ] && exit 0
+IMAGE=""
+for file in /usr/share/backgrounds/family-linux/wallpaper.*; do
+    [ -f "$file" ] && IMAGE="$file"
+done
+[ -n "$IMAGE" ] || exit 0
+command -v plasma-apply-wallpaperimage >/dev/null 2>&1 || exit 0
+if plasma-apply-wallpaperimage "$IMAGE" >/dev/null 2>&1; then
+    mkdir -p "$STATE" && : > "$MARKER"
+fi

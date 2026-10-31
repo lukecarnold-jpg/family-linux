@@ -1,4 +1,4 @@
-"""The GNOME app's link to family-ctl. No GTK here, so it can be tested anywhere.
+"""The Family Controls app's link to family-ctl. No Qt here, so it can be tested anywhere.
 
 Every call runs `pkexec family-ctl ...`. polkit asks for the parent's password (the action
 org.familylinux.manage, remembered for a few minutes), so the app never runs as root and all

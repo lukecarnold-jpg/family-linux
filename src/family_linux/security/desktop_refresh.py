@@ -1,11 +1,10 @@
 """Keeps child app menus in step with what is installed.
 
-A systemd path unit watches the places where installs add or remove desktop entries (apt, snapd,
-flatpak). When one changes, it runs this module, which re-applies each child's app approvals. A new
+A systemd path unit watches the places where installs add or remove desktop entries (apt and PackageKit). When one changes, it runs this module, which re-applies each child's app approvals. A new
 app therefore stays hidden from the child until the parent approves it, without waiting for the next
 full apply.
 
-Installing an app is authorised separately (see snap_policy). Authorising an install does not approve
+Installing an app is authorised separately (see package_gate). Authorising an install does not approve
 the app.
 """
 
@@ -19,14 +18,14 @@ from typing import List
 from family_linux.config import PolicyConfigManager
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security.apparmor import AppArmorManager
-from family_linux.security.app_guard import FLATPAK_DESKTOP_DIR, SNAP_DESKTOP_DIR, AppGuard
+from family_linux.security.app_guard import SYSTEM_APP_DIRS, AppGuard
 
 PATH_UNIT_NAME = "family-appguard.path"
 SERVICE_UNIT_NAME = "family-appguard.service"
 PATH_UNIT_PATH = Path(f"/etc/systemd/system/{PATH_UNIT_NAME}")
 SERVICE_UNIT_PATH = Path(f"/etc/systemd/system/{SERVICE_UNIT_NAME}")
 # Directories that change when apps are installed or removed. Each one must exist for the path unit.
-WATCHED_DIRS: List[Path] = [Path("/usr/share/applications"), SNAP_DESKTOP_DIR, FLATPAK_DESKTOP_DIR]
+WATCHED_DIRS: List[Path] = list(SYSTEM_APP_DIRS)
 
 
 def render_path_unit() -> str:

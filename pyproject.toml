@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "family-linux"
 version = "0.1.0"
-description = "Child-safe Linux experience that parents can manage simply, built on Ubuntu LTS."
+description = "Child-safe Linux experience that parents can manage simply, built on Debian stable with KDE Plasma."
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
     {name = "Family Linux Contributors"}
 ]
-keywords = ["parental-controls", "ubuntu", "child-safe", "linux-security", "family-linux"]
+keywords = ["parental-controls", "debian", "kde-plasma", "child-safe", "linux-security", "family-linux"]
 dependencies = [
     "pyyaml>=6.0",
 ]

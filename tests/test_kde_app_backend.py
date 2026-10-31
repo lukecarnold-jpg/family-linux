@@ -1,5 +1,5 @@
-"""Family Controls (GNOME app): the family-ctl calls behind the interface, and the CLI commands it uses.
-The GTK interface itself is exercised in an Ubuntu container (see DEV_HIST)."""
+"""Family Controls (KDE app): the family-ctl calls behind the interface, and the CLI commands it uses.
+The Qt window itself is exercised in test_kde_app_window.py."""
 
 import argparse
 import json
@@ -8,7 +8,7 @@ import subprocess
 import pytest
 import yaml
 
-from family_linux.gnome_app.backend import (
+from family_linux.kde_app.backend import (
     BackendError,
     DemoClient,
     FamilyCtlClient,
@@ -94,7 +94,7 @@ def test_typed_websites_are_normalised(typed, expected):
 def test_input_checks():
     assert valid_username("sam") and not valid_username("Sam") and not valid_username("x")
     assert valid_clock("20:30") and valid_clock("07:00") and not valid_clock("8pm") and not valid_clock("24:00")
-    assert approved_entries_for("org.gnome.Calculator", ["org.gnome.Calculator", "vlc"]) == ["org.gnome.Calculator"]
+    assert approved_entries_for("org.kde.kcalc", ["org.kde.kcalc", "vlc"]) == ["org.kde.kcalc"]
 
 
 def test_demo_client_serves_the_file_and_accepts_changes(tmp_path):
@@ -137,20 +137,15 @@ def test_web_remove_clears_both_lists(test_ctl):
 
 def test_the_app_is_installed_and_never_shown_to_children():
     from family_linux.models import ALWAYS_BLOCKED_COMMANDS, ChildAccount, FamilyPolicy, ParentAccount
-    from family_linux.provisioner.autoinstall import SubiquityAutoinstallGenerator
+    from family_linux.provisioner.preseed import PACKAGES, DebianPreseedGenerator
     from family_linux.security.app_guard import AppGuard
     from family_linux.security.adapter import SystemAdapter
 
-    text = SubiquityAutoinstallGenerator(FamilyPolicy(parent=ParentAccount("parent", "P", password="Correct-Horse-42-Battery"))).generate_user_data(locale="en_US.UTF-8", keyboard_layout="us")
-    auto = yaml.safe_load(text.split("\n", 1)[1])["autoinstall"]
-    assert {"python3-gi", "gir1.2-gtk-4.0", "gir1.2-adw-1"} <= set(auto["packages"])
-    # App Centre from apt. Firefox is a snap, installed by the first-boot apply (not the apt list).
-    assert {"gnome-software", "gnome-software-plugin-snap"} <= set(auto["packages"])
-    assert "firefox" not in auto["packages"]
-    commands = "\n".join(auto["late-commands"])
+    script = DebianPreseedGenerator(FamilyPolicy(parent=ParentAccount("parent", "P", password="Correct-Horse-42-Battery"))).generate_late_script()
+    assert {"python3-pyqt6"} <= set(PACKAGES)
     for target in ("/usr/local/bin/family-linux-parent", "/usr/share/applications/org.familylinux.Parent.desktop",
                    "/usr/share/polkit-1/actions/org.familylinux.manage.policy"):
-        assert target in commands
+        assert target in script
 
     assert "org.familylinux.parent" in ALWAYS_BLOCKED_COMMANDS
     child = ChildAccount.create("kid", "Kid", "teen")
@@ -158,17 +153,17 @@ def test_the_app_is_installed_and_never_shown_to_children():
     assert not AppGuard(SystemAdapter(dry_run=True)).is_app_allowed(child, "org.familylinux.Parent.desktop")
 
 
-def test_app_centre_is_visible_to_children_and_approved_by_default():
+def test_app_store_is_visible_to_children_and_approved_by_default():
     from family_linux.models import ALWAYS_BLOCKED_COMMANDS, DEFAULT_APPROVED_APPS, AgeTier
 
-    assert "org.gnome.Software" not in ALWAYS_BLOCKED_COMMANDS
+    assert "org.kde.discover" not in ALWAYS_BLOCKED_COMMANDS
     for tier in AgeTier:
-        assert "org.gnome.Software" in DEFAULT_APPROVED_APPS[tier.value]
+        assert "org.kde.discover" in DEFAULT_APPROVED_APPS[tier.value]
 
 
-@pytest.mark.parametrize("desktop_id", ["org.gnome.Terminal", "org.gnome.Settings", "snap-store_snap-store", "brave_brave"])
-def test_ubuntu_system_tools_cannot_be_approved_for_a_child(desktop_id):
-    # The always-blocked list held command names; Ubuntu 24.04 menus use these desktop IDs.
+@pytest.mark.parametrize("desktop_id", ["org.kde.konsole", "org.kde.yakuake", "org.kde.systemsettings", "konsole"])
+def test_terminals_and_settings_cannot_be_approved_for_a_child(desktop_id):
+    # The always-blocked list holds the Debian and KDE desktop IDs for terminals and settings.
     from family_linux.models import ChildAccount
     from family_linux.security.app_guard import AppGuard
     from family_linux.security.adapter import SystemAdapter
@@ -178,41 +173,3 @@ def test_ubuntu_system_tools_cannot_be_approved_for_a_child(desktop_id):
     assert not AppGuard(SystemAdapter(dry_run=True)).is_app_allowed(child, desktop_id + ".desktop")
 
 
-UBUNTU_RELEASE_UPGRADES = """[DEFAULT]
-# Default prompting and upgrade behavior, valid options:
-#  never  - Never check for, or allow upgrading to, a new release.
-Prompt=lts
-"""
-
-
-def test_release_upgrade_notice_is_turned_off_keeping_the_rest_of_the_file(tmp_path):
-    # Seen in VirtualBox: "Ubuntu 26.04.1 LTS Upgrade Available" opened on the desktop.
-    from family_linux.security.adapter import SystemAdapter
-    from family_linux.security.release_upgrades import disable_release_upgrade_prompt, prompt_is_off, with_prompt_never
-
-    path = tmp_path / "release-upgrades"
-    path.write_text(UBUNTU_RELEASE_UPGRADES)
-    adapter = SystemAdapter(dry_run=True)
-    disable_release_upgrade_prompt(adapter, path)
-    written = adapter.simulated_files[str(path)]
-    assert prompt_is_off(written) and "Prompt=lts" not in written
-    assert "# Default prompting" in written
-
-    path.write_text(written)
-    adapter = SystemAdapter(dry_run=True)
-    disable_release_upgrade_prompt(adapter, path)
-    assert str(path) not in adapter.simulated_files  # already off: no rewrite
-    assert prompt_is_off(with_prompt_never(""))
-    assert not prompt_is_off(UBUNTU_RELEASE_UPGRADES)
-
-
-def test_only_the_brave_snap_is_blocked_not_the_brave_package():
-    from family_linux.models import ChildAccount
-    from family_linux.security.app_guard import AppGuard
-    from family_linux.security.adapter import SystemAdapter
-
-    child = ChildAccount.create("kid", "Kid", "teen")
-    child.app_policy.approved_apps.append("brave")
-    guard = AppGuard(SystemAdapter(dry_run=True))
-    assert not guard.is_app_allowed(child, "brave_brave.desktop")
-    assert guard.is_app_allowed(child, "brave-browser.desktop")

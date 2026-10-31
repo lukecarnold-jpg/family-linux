@@ -64,63 +64,60 @@ DNS_SERVERS: Dict[str, List[str]] = {
     DNSProvider.OPENDNS_FAMILY.value: ["208.67.222.123", "208.67.220.123"],
 }
 
+# Desktop entry ids (or command names) for the apps each age preset shows. Matching is by substring,
+# so "firefox" also matches firefox-esr.
 DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
     AgeTier.YOUNG_CHILD.value: [
         "tuxpaint",
-        "gcompris-qt",
-        "scratch3",
-        "org.gnome.Calculator",
-        "org.gnome.Software",
-        "firefox",
+        "org.kde.kcalc",
+        "org.kde.discover",
+        "firefox-esr",
         "vlc",
     ],
     AgeTier.PRE_TEEN.value: [
         "tuxpaint",
-        "gcompris-qt",
-        "scratch3",
         "libreoffice",
-        "org.gnome.Calculator",
-        "org.gnome.Software",
-        "firefox",
+        "org.kde.kcalc",
+        "org.kde.discover",
+        "firefox-esr",
         "chromium",
         "vlc",
-        "gedit",
+        "org.kde.kwrite",
     ],
     AgeTier.TEEN.value: [
-        "scratch3",
         "libreoffice",
-        "org.gnome.Calculator",
-        "org.gnome.Software",
-        "firefox",
+        "org.kde.kcalc",
+        "org.kde.discover",
+        "firefox-esr",
         "chromium",
         "vlc",
-        "gedit",
+        "org.kde.kwrite",
         "gimp",
-        "inkscape",
+        "org.inkscape.Inkscape",
         "audacity",
     ],
     AgeTier.CUSTOM.value: [
-        "firefox",
+        "firefox-esr",
         "libreoffice",
-        "org.gnome.Calculator",
-        "org.gnome.Software",
+        "org.kde.kcalc",
+        "org.kde.discover",
         "vlc",
     ],
 }
 
 ALWAYS_BLOCKED_COMMANDS: List[str] = [
-    "gnome-terminal",
-    "org.gnome.terminal",
-    "gnome-terminal-server",
-    "org.gnome.console",
-    "kgx",
+    "konsole",
+    "org.kde.konsole",
+    "yakuake",
+    "org.kde.yakuake",
+    "qterminal",
     "xterm",
     "uxterm",
-    "konsole",
     "xfce4-terminal",
     "tilix",
     "lxterminal",
     "mate-terminal",
+    "gnome-terminal",
     "alacritty",
     "kitty",
     "foot",
@@ -135,23 +132,15 @@ ALWAYS_BLOCKED_COMMANDS: List[str] = [
     "apt",
     "apt-get",
     "dpkg",
-    "snap",
-    "flatpak",
+    "aptitude",
     "synaptic",
-    "system-settings",
-    "gnome-control-center",
+    "flatpak",
+    "snap",
+    "systemsettings",
+    "org.kde.systemsettings",
+    "kcmshell6",
     "org.familylinux.parent",  # the parent's Family Controls app
-    # Desktop entry IDs on Ubuntu 24.04 (the names above are commands; menus use these IDs)
-    "org.gnome.terminal",
-    "org.gnome.console",
-    "org.gnome.ptyxis",
-    "org.gnome.settings",
-    "snap-store_snap-store",
-    "snap-store_ubuntu-software",
-    # Brave from the Snap Store: its sandbox cannot read managed browser settings, so private
-    # windows, SafeSearch and its own secure DNS stay under the child's control. The Brave
-    # package from Brave's own repository (brave-browser) is not blocked.
-    "brave_brave",
+    # Other browsers, such as Brave or Edge, are not blocked; the browser rules in browser.py apply to them.
 ]
 
 
@@ -287,7 +276,7 @@ class ChildAccount:
 
 @dataclass
 class SecurityPolicy:
-    distro_base: str = "ubuntu_lts"
+    distro_base: str = "debian_stable"
     privilege_model: str = "unix_users_groups"
     admin_escalation: str = "sudo_for_parent_only"
     apparmor: str = "where_applicable"
@@ -400,7 +389,7 @@ class FamilyPolicy:
 
         sec_raw = data.get("security", {})
         security = SecurityPolicy(
-            distro_base=sec_raw.get("distro_base", "ubuntu_lts"),
+            distro_base=sec_raw.get("distro_base", "debian_stable"),
             privilege_model=sec_raw.get("privilege_model", "unix_users_groups"),
             admin_escalation=sec_raw.get("admin_escalation", "sudo_for_parent_only"),
             apparmor=sec_raw.get("apparmor", "where_applicable"),

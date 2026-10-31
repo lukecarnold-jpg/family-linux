@@ -32,8 +32,8 @@ from family_linux.security.app_guard import AppGuard
 from family_linux.security.apparmor import PROFILE_PATH
 from family_linux.security.browser import BRAVE_POLICY_PATH, CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
 from family_linux.security.password_policy import PAM_PASSWD_PATH, block_in_place
-from family_linux.security.snap_policy import SnapInstallGate
-from family_linux.security.release_upgrades import RELEASE_UPGRADES_PATH, prompt_is_off
+from family_linux.security.package_gate import PackageInstallGate
+from family_linux.security.desktop_lockdown import KDEGLOBALS_PATH, lockdown_in_place
 from family_linux.security.users import SUDOERS_FILE
 from family_linux.security.dns_gateway import clear_request, load_requests
 from family_linux.security.web_gateway import REQUESTS_PATH
@@ -77,7 +77,7 @@ class FamilyCtl:
         self.tracker = ScreenTimeTracker(dry_run=dry_run)
 
     def cmd_state(self) -> None:
-        """Prints the current state as JSON for the GNOME app: policy (no passwords), pending web
+        """Prints the current state as JSON for the Family Controls app: policy (no passwords), pending web
         requests, today's screen time, and the apps installed on the system."""
         policy = self.config_manager.load_policy()
         apps = [{"id": a["id"], "name": a["name"]} for a in AppGuard(self.adapter, self.audit).discover_system_apps()]
@@ -143,7 +143,7 @@ class FamilyCtl:
 
         elif args.user_action == "add":
             if getattr(args, "password_stdin", False):
-                # Keeps the password out of the process list (used by the GNOME app).
+                # Keeps the password out of the process list (used by the Family Controls app).
                 args.password = sys.stdin.readline().rstrip("\n")
             if args.password is not None and len(args.password) < MIN_PASSWORD_LENGTH:
                 print(f"[ERROR] Password must be at least {MIN_PASSWORD_LENGTH} characters.")
@@ -443,9 +443,9 @@ class FamilyCtl:
                 "AppArmor child profile loaded in enforce mode",
                 "Unattended security updates enabled",
                 "Parent password rules enforced by PAM",
-                "Snap installs need the parent's password (polkit rule)",
+                "Software changes need the parent's password (polkit rule)",
+                "Alt+F2 run dialog and shell access locked (Plasma kiosk)",
                 "System time zone matches the policy",
-                "New-release upgrade notice off",
             ):
                 skip(name, "live check runs only on Linux")
         else:
@@ -500,14 +500,14 @@ class FamilyCtl:
             else:
                 record("System time zone matches the policy", True, f"no time zone in the policy; system uses {system_tz}")
 
-            upgrades = RELEASE_UPGRADES_PATH.read_text(encoding="utf-8") if RELEASE_UPGRADES_PATH.exists() else ""
-            record("New-release upgrade notice off", prompt_is_off(upgrades), f"{RELEASE_UPGRADES_PATH}: Prompt=never")
+            kiosk = KDEGLOBALS_PATH.read_text(encoding="utf-8") if KDEGLOBALS_PATH.exists() else ""
+            record("Alt+F2 run dialog and shell access locked (Plasma kiosk)", lockdown_in_place(kiosk), str(KDEGLOBALS_PATH))
 
-            snap_gate = SnapInstallGate()
+            package_gate = PackageInstallGate()
             record(
-                "Snap installs need the parent's password (polkit rule)",
-                snap_gate.is_in_place([c.username for c in policy.children]),
-                str(snap_gate.rule_path),
+                "Software changes need the parent's password (polkit rule)",
+                package_gate.is_in_place([c.username for c in policy.children]),
+                str(package_gate.rule_path),
             )
 
             updates = _probe(["systemctl", "is-enabled", "unattended-upgrades"])
@@ -539,7 +539,7 @@ def main() -> None:
 
     # status
     subparsers.add_parser("status", help="Show system status and child account limits")
-    subparsers.add_parser("state", help="Print the current state as JSON (used by the GNOME app)")
+    subparsers.add_parser("state", help="Print the current state as JSON (used by the Family Controls app)")
 
     # verify
     subparsers.add_parser("verify", help="Audit security baseline compliance")

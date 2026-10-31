@@ -1,14 +1,13 @@
 """Time zone in setup: curfews and bedtimes use local time, so the installed system must use the
-family's time zone instead of Ubuntu's UTC default."""
+family's time zone instead of the installer's UTC default."""
 
 import os
 from pathlib import Path
 
 import pytest
-import yaml
 
 from family_linux.models import FamilyPolicy, ParentAccount
-from family_linux.provisioner.autoinstall import SubiquityAutoinstallGenerator
+from family_linux.provisioner.preseed import DebianPreseedGenerator
 from family_linux.timezones import detect_host_timezone, is_valid_timezone
 
 STRONG = "Correct-Horse-42-Battery"
@@ -49,13 +48,13 @@ def test_policy_rejects_an_unknown_zone_and_keeps_a_valid_one():
     assert FamilyPolicy.from_dict(policy.to_dict()).timezone == "Australia/Sydney"
 
 
-def test_autoinstall_sets_the_zone_or_detects_it_when_unset():
+def test_preseed_sets_the_zone_or_uses_utc_when_unset():
     def zone(policy):
-        text = SubiquityAutoinstallGenerator(policy).generate_user_data(locale="en_US.UTF-8", keyboard_layout="us")
-        return yaml.safe_load(text.split("\n", 1)[1])["autoinstall"]["timezone"]
+        text = DebianPreseedGenerator(policy).generate_preseed(locale="en_US.UTF-8", keyboard_layout="us")
+        return next(line for line in text.splitlines() if line.startswith("d-i time/zone string ")).split(" string ", 1)[1]
 
     assert zone(FamilyPolicy(parent=ParentAccount("parent", "P", password=STRONG), timezone="Europe/London")) == "Europe/London"
-    assert zone(FamilyPolicy(parent=ParentAccount("parent", "P", password=STRONG))) == "geoip"
+    assert zone(FamilyPolicy(parent=ParentAccount("parent", "P", password=STRONG))) == "UTC"
 
 
 def test_apply_sets_the_system_time_zone(tmp_path):
@@ -74,17 +73,17 @@ def test_unattended_install_takes_the_zone_and_rejects_unknown_ones(monkeypatch,
 
     out = tmp_path / "user-data"
     monkeypatch.setattr("sys.argv", ["family-installer", "--dry-run", "--non-interactive", "--parent-pass", STRONG,
-                                     "--timezone", "Mars/Base", "--export-autoinstall", str(out)])
+                                     "--timezone", "Mars/Base", "--export-preseed", str(out)])
     with pytest.raises(SystemExit) as exc:
         wizard_module.main()
     assert "time zone" in str(exc.value)
 
     monkeypatch.setattr("sys.argv", ["family-installer", "--dry-run", "--non-interactive", "--parent-pass", STRONG,
-                                     "--timezone", "Europe/London", "--export-autoinstall", str(out)])
+                                     "--timezone", "Europe/London", "--export-preseed", str(out)])
     with pytest.raises(SystemExit) as exc:
         wizard_module.main()
     assert exc.value.code == 0
-    assert "timezone: Europe/London" in out.read_text()
+    assert "d-i time/zone string Europe/London" in out.read_text()
 
 
 def test_interactive_step_defaults_to_the_host_zone_and_retries_on_unknown(monkeypatch):

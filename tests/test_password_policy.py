@@ -12,7 +12,7 @@ from family_linux.security.password_policy import (
     render_pam_block,
 )
 
-UBUNTU_PASSWD = """#
+DEBIAN_PASSWD = """#
 # The PAM configuration file for the Shadow `passwd' service
 #
 # @include common-password
@@ -61,7 +61,7 @@ def test_block_goes_before_the_common_password_include():
 
 
 def test_block_goes_before_the_first_password_rule_when_no_include():
-    text = insert_block(UBUNTU_PASSWD, ["kid"])
+    text = insert_block(DEBIAN_PASSWD, ["kid"])
     lines = text.splitlines()
     assert lines.index(END_MARKER) < lines.index(
         "password\t[success=1 default=ignore]\tpam_unix.so obscure"
@@ -70,7 +70,7 @@ def test_block_goes_before_the_first_password_rule_when_no_include():
 
 
 def test_applying_twice_leaves_one_block():
-    once = insert_block(UBUNTU_PASSWD, ["kid"])
+    once = insert_block(DEBIAN_PASSWD, ["kid"])
     twice = insert_block(once, ["kid"])
     assert twice == once
     assert twice.count(BEGIN_MARKER) == 1
@@ -82,15 +82,15 @@ def test_block_is_appended_when_the_file_has_no_password_rules():
 
 
 def test_block_in_place_checks_marker_and_minimum_length():
-    assert block_in_place(insert_block(UBUNTU_PASSWD, ["kid"]))
-    weak = insert_block(UBUNTU_PASSWD, ["kid"]).replace("minlen=14", "minlen=8")
+    assert block_in_place(insert_block(DEBIAN_PASSWD, ["kid"]))
+    weak = insert_block(DEBIAN_PASSWD, ["kid"]).replace("minlen=14", "minlen=8")
     assert not block_in_place(weak)
-    assert not block_in_place(UBUNTU_PASSWD)
+    assert not block_in_place(DEBIAN_PASSWD)
 
 
 def test_dry_run_writes_the_block_to_the_pam_path_without_touching_the_host(tmp_path):
     pam = tmp_path / "passwd"
-    pam.write_text(UBUNTU_PASSWD)
+    pam.write_text(DEBIAN_PASSWD)
     adapter = SystemAdapter(dry_run=True)
     rules = ParentPasswordRules(adapter, pam_path=pam)
 
@@ -98,4 +98,4 @@ def test_dry_run_writes_the_block_to_the_pam_path_without_touching_the_host(tmp_
 
     simulated = adapter.simulated_files[str(pam)]
     assert BEGIN_MARKER in simulated and "minlen=14" in simulated
-    assert pam.read_text() == UBUNTU_PASSWD  # the real file is unchanged in a dry run
+    assert pam.read_text() == DEBIAN_PASSWD  # the real file is unchanged in a dry run

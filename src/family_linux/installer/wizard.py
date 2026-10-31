@@ -36,7 +36,7 @@ from family_linux.models import (
 )
 from family_linux.timezones import detect_host_timezone, is_valid_timezone
 from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
-from family_linux.provisioner.autoinstall import SubiquityAutoinstallGenerator
+from family_linux.provisioner.preseed import DebianPreseedGenerator
 from family_linux.security.adapter import SystemAdapter
 
 
@@ -106,7 +106,7 @@ class InstallerWizard:
         print("     Safe, predictable desktop for children, simple for parents")
         print("=" * 64)
         print("\nWelcome to Family Linux installation.")
-        print("Family Linux sets up an Ubuntu LTS baseline with strict child-safe defaults.")
+        print("Family Linux sets up a Debian stable (KDE Plasma) baseline with strict child-safe defaults.")
 
         languages = ["en_US.UTF-8", "en_GB.UTF-8", "es_ES.UTF-8", "fr_FR.UTF-8", "de_DE.UTF-8"]
         self.language = self.prompt_choice("Step 1: Choose system language", languages, "en_US.UTF-8")
@@ -343,16 +343,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Family Linux Interactive Installer")
     parser.add_argument("--dry-run", action="store_true", help="Simulate installation without modifying system files")
     parser.add_argument("--non-interactive", action="store_true", help="Run unattended with defaults")
-    parser.add_argument("--language", type=str, default="en_US.UTF-8", help="System locale (used for autoinstall export)")
-    parser.add_argument("--keyboard", type=str, default="us", help="Keyboard layout (used for autoinstall export)")
+    parser.add_argument("--language", type=str, default="en_US.UTF-8", help="System locale (used for the preseed export)")
+    parser.add_argument("--keyboard", type=str, default="us", help="Keyboard layout (used for the preseed export)")
     parser.add_argument("--timezone", type=str, default=None, help="Time zone, e.g. Australia/Sydney (default: this computer's time zone). Curfews use local time.")
     parser.add_argument("--target-disk", type=str, default=None, help="Target disk path, e.g. /dev/nvme0n1 (default: first disk the installer finds)")
     parser.add_argument("--parent-user", type=str, default="parent", help="Parent username")
     parser.add_argument("--parent-name", type=str, default="Family Administrator", help="Parent full name")
     parser.add_argument("--parent-pass", type=str, default=None, help=f"Parent password (required with --non-interactive; at least {MIN_PARENT_PASSWORD_LENGTH} characters with upper-case, lower-case, a number and a special character)")
     parser.add_argument("--child", action="append", help="Child account specification (format: username:fullname:tier:password, password required)")
-    parser.add_argument("--export-autoinstall", type=str, help="Export Ubuntu Subiquity autoinstall user-data YAML to file and exit")
-    parser.add_argument("--export-policy", type=str, help="With --export-autoinstall: also write the policy file (no passwords) for first-boot provisioning")
+    parser.add_argument("--export-preseed", type=str, help="Export the Debian Installer preseed file to this path, and the late-command script beside it, then exit")
+    parser.add_argument("--export-policy", type=str, help="With --export-preseed: also write the policy file (no passwords) for first-boot provisioning")
     args = parser.parse_args()
 
     wizard = InstallerWizard(dry_run=args.dry_run, interactive=not args.non_interactive)
@@ -365,7 +365,7 @@ def main() -> None:
     if args.target_disk:
         wizard.target_disk = args.target_disk
 
-    if args.non_interactive or args.export_autoinstall:
+    if args.non_interactive or args.export_preseed:
         problems = parent_password_problems(args.parent_pass)
         if problems:
             sys.exit(f"Error: --parent-pass is required with --non-interactive and must include {', '.join(problems)}.")
@@ -389,18 +389,21 @@ def main() -> None:
 
         policy = wizard.run_step_9_validation()
 
-        if args.export_autoinstall:
-            gen = SubiquityAutoinstallGenerator(policy)
-            content = gen.generate_user_data(
+        if args.export_preseed:
+            gen = DebianPreseedGenerator(policy)
+            content = gen.generate_preseed(
                 locale=wizard.language,
                 keyboard_layout=wizard.keyboard,
                 target_disk=args.target_disk,
             )
-            out_path = Path(args.export_autoinstall)
+            out_path = Path(args.export_preseed)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             with open(out_path, "w", encoding="utf-8") as f:
                 f.write(content)
-            print(f"Exported Ubuntu Subiquity autoinstall configuration to {out_path}")
+            late_path = out_path.parent / "late-command.sh"
+            with open(late_path, "w", encoding="utf-8") as f:
+                f.write(gen.generate_late_script())
+            print(f"Exported Debian preseed to {out_path} and the late-command script to {late_path}")
             if args.export_policy:
                 from family_linux.config import PolicyConfigManager
                 saved = PolicyConfigManager(Path(args.export_policy)).save_policy(policy, reason="ISO build")

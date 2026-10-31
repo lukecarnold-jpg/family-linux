@@ -4,15 +4,15 @@
 
 Family Linux uses a layered architecture:
 
-1. Ubuntu LTS base system
-2. Ubuntu-aligned security and policy controls
+1. Debian stable base system with KDE Plasma
+2. Debian-aligned security and policy controls
 3. Child-safe desktop/session layer
 4. Parent management layer
 5. Audit and recovery layer
 
-## Layer 1: Ubuntu LTS base system
+## Layer 1: Debian stable base system
 
-The project baseline is Ubuntu, with preference for an LTS release track for predictable maintenance and security support.
+The project baseline is Debian stable: Debian 13 (trixie), with full security support until August 2028 and LTS support until June 2030 (debian.org release information). Packages come from the Debian repositories (main, contrib and non-free-firmware) through apt; Flatpak and Snap are not used.
 
 Design intent:
 
@@ -22,7 +22,7 @@ Design intent:
 
 ## Layer 2: Security and policy controls
 
-Security controls align with Ubuntu capabilities:
+Security controls align with Debian capabilities:
 
 - normal Unix users/groups and strict file permissions
 - `sudo` reserved for the parent administrator account

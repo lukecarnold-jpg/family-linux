@@ -11,7 +11,7 @@ For each query the resolver decides one of three things:
 Blocked lookups and names the family upstream refuses are recorded as requests, so a parent
 can review them and approve or dismiss them.
 
-Stdlib only, so it runs on a stock Ubuntu install with no extra packages.
+Stdlib only, so it runs on a stock Debian install with no extra packages.
 """
 
 from __future__ import annotations
