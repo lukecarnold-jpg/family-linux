@@ -54,6 +54,8 @@ profile family-linux-child flags=(attach_disconnected) {
   # System libraries and the helpers apps start from them (Firefox runs
   # /usr/lib/firefox-esr/firefox-esr for every content process)
   /usr/lib/** mrix,
+  # Apps installed outside Debian's packages: Google Chrome lives in /opt/google/chrome
+  /opt/** mrix,
   /usr/lib64/** mr,
   /lib/** mr,
   /lib64/** mr,
@@ -66,7 +68,14 @@ profile family-linux-child flags=(attach_disconnected) {
   /usr/bin/** ix,
   /usr/libexec/** ix,
   /bin/** ix,
+  # Chrome's sandbox lists /proc itself; without the folder rule it stopped at start-up
+  @{PROC}/ r,
   @{PROC}/** r,
+  /dev/udmabuf rw,
+  # Chrome's crash reporter asks for ptrace; children's browsers do not need crash reports
+  deny capability sys_ptrace,
+  # Apps do not write to their own install folders (Chrome tries to make one under /opt)
+  deny /opt/** w,
   owner @{PROC}/@{pid}/** rw,
   /sys/** r,
   /dev/ r,

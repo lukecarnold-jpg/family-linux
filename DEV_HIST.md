@@ -692,6 +692,35 @@ Request from the user: act on the review's list, starting with item 1.
 
 **Seen but not changed.** Firefox's own background services (`firefox.settings.services.mozilla.com`, `location.services.mozilla.com`) appear in the parent's website requests. Firefox's first-run privacy page on `www.mozilla.org` was also refused while lookups bypassed the gateway. That page should load now, but this was not re-checked. See the open items.
 
+## Session 28: web filtering for any browser, with Google Chrome first; CI on PR #8
+
+**Request.** Make the web filtering work regardless of the browser, focusing on the most installed one. Google Chrome has about 70% of desktop browser share (StatCounter, mid-2026), and Google now ships an arm64 Linux `.deb`.
+
+**Design.** The filter is network-level. The per-child DNS gateway and TLS name check are applied by nftables to each child's user ID, so they cover every browser and every program. A browser with its own DNS-over-HTTPS fails closed: its addresses never came from an allowed lookup. Only the in-browser settings are per browser.
+
+**What Chrome needed** (found by installing Chrome 156 for arm64 on the appliance and running it as the child):
+
+- **The child AppArmor profile stopped Chrome.** Chrome installs to `/opt/google/chrome`, which the profile did not let apps run from. After that was allowed, Chrome's sandbox stopped at start-up ("proc_util ... Permission denied", then "Zygote process exited prematurely"), because the profile allowed `/proc/**` but not the `/proc/` folder itself. **Fix:** `/opt/** mrix`, `@{PROC}/ r`, `/dev/udmabuf rw`; deny `sys_ptrace` (crash reporter) and writes under `/opt`.
+- **Encrypted Client Hello (on by default in Chrome) hides the site name the filter checks,** so the filter refused those connections. **Fix:** `EncryptedClientHelloEnabled: false` for Chrome, Chromium, Edge and Brave; `network.dns.echconfig.enabled` and `network.dns.http3_echconfig.enabled` false for Firefox.
+- **Guest windows** are private windows by another name. `BrowserGuestModeEnabled` follows the private-window setting. `ForceYouTubeRestrict` replaces `ForceYouTubeSafetyMode`, which `chrome://policy` reported as an error (deprecated).
+- **Chrome was not approved by default.** `google-chrome` is added wherever `chromium` is (10 to 13, 14 and over).
+
+**Checked on the appliance** (Chrome 156.0.8078.79, arm64; installed by the parent with `apt install` of Google's `.deb`):
+
+- The child's menu entry appeared by itself, approved and confined (`Exec=aa-exec -p family-linux-child -- /usr/bin/google-chrome-stable`).
+- Chrome opened for the child from the launcher and showed "Your device is managed by your organization".
+- `example.com` loaded; `www.tiktok.com` gave "This site can't be reached"; `www.cloudflare.com` (an ECH site) loaded.
+- `chrome://policy` showed every policy with status OK.
+
+**CI on PR #8 (first run of the new jobs).** The `Debian install` workflow passed: a full install of the automated amd64 ISO under QEMU, plus the first boot. Two jobs failed:
+
+- **Debian 13 container: the parent's password change failed.** `pam_pwquality` reported "/var/cache/cracklib/cracklib_dict.pwd: No such file or directory ... error loading dictionary". The dictionary is in `cracklib-runtime`, which is only a recommended package and is missing from installs without recommends. Without it every password change fails. **Fix:** `cracklib-runtime` is in the preseed and is installed by the password rules; the CI container installs it.
+- **Live apply (Ubuntu runner): the children's kiosk check failed.** The runner has no SDDM, so there is no `/etc/pam.d/sddm` to add the rule to. **Fix:** `verify` skips the check when SDDM is not installed. The job's later step grepped the old path `/etc/xdg/kdeglobals`; it now checks `/etc/xdg/family-linux-children/kdeglobals`.
+
+**Parent guide.** `docs/web-filtering-guide.md` explains that the filter covers every browser, lists what was checked per browser, and has steps for installing Chrome.
+
+**Tests.** 282 passed, 5 skipped.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
@@ -719,3 +748,5 @@ Request from the user: act on the review's list, starting with item 1.
 22. Session 26, answered: on the rebuilt appliance `lsattr` shows `i` on `~child/.profile`, `~child/.config/autostart`, `~child/.config/plasma-workspace/env` and `~child/.local/share/applications`, and `family-ctl verify` reports "All baseline checks passed".
 24. Session 27: Firefox's background services (`firefox.settings.services.mozilla.com`, which carries Firefox's security blocklists, and `location.services.mozilla.com`) show up as website requests for the parent. Decide whether to allow the Mozilla update and security services for children by default and leave them out of the requests list.
 25. Session 27, answered: on a fresh import of the rebuilt appliance (first boot: 26 actions, no warnings), Family Controls opened from the launcher and loaded after the polkit prompt; Firefox opened for the child from the launcher; `example.com` and Firefox's privacy page on mozilla.org loaded.
+26. Session 28: Chrome lets a child sign in to a Google account and sync. Decide whether to turn sign-in off for children (`BrowserSignin: 0`, `SyncDisabled`).
+27. Session 28: check the Brave, Edge and Chromium settings in each browser's policy page, as was done for Chrome.

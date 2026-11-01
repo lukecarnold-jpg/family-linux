@@ -37,6 +37,7 @@ PACKAGES: List[str] = [
     "nftables",
     "systemd-resolved",
     "libpam-pwquality",
+    "cracklib-runtime",  # the dictionary pam_pwquality needs; without it every password change fails
     # Networking on the desktop: NetworkManager manages the connection and the DNS filter
     "network-manager",
     # The parent's Family Controls app (Qt, through PyQt6) and the Family Linux CLI

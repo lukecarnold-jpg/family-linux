@@ -157,7 +157,7 @@ jobs:
           done
           # Positive control for the same check: a permitted binary still runs.
           sudo aa-exec -p family-linux-child -- /usr/bin/env true
-          grep -q "shell_access=false" /etc/xdg/kdeglobals
+          grep -q "shell_access=false" /etc/xdg/family-linux-children/kdeglobals
           echo "desktop lockdown (Plasma kiosk restrictions) written"
 
       - name: Confirm the per-child DNS gateway filters each child separately
@@ -428,7 +428,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends git ca-certificates python3 python3-venv \
-            ufw apparmor-utils pamtester libpam-pwquality sudo passwd
+            ufw apparmor-utils pamtester libpam-pwquality cracklib-runtime sudo passwd
 
       - name: Checkout repository
         uses: actions/checkout@v4

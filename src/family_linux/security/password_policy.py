@@ -24,6 +24,10 @@ PAM_PASSWD_PATH = Path("/etc/pam.d/passwd")
 BEGIN_MARKER = "# BEGIN family-linux parent password rules (managed; do not edit)"
 END_MARKER = "# END family-linux parent password rules"
 PWQUALITY_PACKAGE = "libpam-pwquality"
+# pam_pwquality checks new passwords against the cracklib dictionary. Without it every change fails
+# ("error loading dictionary"), so the parent could not change their password at all. The
+# dictionary is only a recommended package, and installs without recommends leave it out.
+DICTIONARY_PACKAGE = "cracklib-runtime"
 
 
 def render_pam_block(children: Sequence[str]) -> List[str]:
@@ -104,6 +108,10 @@ class ParentPasswordRules:
             if install.returncode != 0:
                 warnings.append(f"{PWQUALITY_PACKAGE} could not be installed; parent password rules are not enforced")
                 return warnings
+        if self.adapter.run_command(["dpkg", "-s", DICTIONARY_PACKAGE]).returncode != 0:
+            install = self.adapter.run_command(["apt-get", "install", "-y", "-q", DICTIONARY_PACKAGE])
+            if install.returncode != 0:
+                warnings.append(f"{DICTIONARY_PACKAGE} could not be installed; password changes fail the dictionary check")
 
         # Dry run never reads the real file, so simulated output is the same on every host.
         current = self.pam_path.read_text(encoding="utf-8") if self.pam_path.exists() and not self.adapter.dry_run else ""

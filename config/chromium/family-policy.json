@@ -2,29 +2,11 @@
   "IncognitoModeAvailability": 1,
   "DeveloperToolsAvailability": 2,
   "ForceGoogleSafeSearch": true,
-  "ForceYouTubeSafetyMode": 2,
+  "ForceYouTubeRestrict": 2,
   "DnsOverHttpsMode": "off",
-  "ExtensionInstallBlocklist": ["*"],
-  "URLBlocklist": [
-    "http://*.adult",
-    "https://*.adult",
-    "http://*.xxx",
-    "https://*.xxx",
-    "http://*.porn",
-    "https://*.porn",
-    "http://*.gambling",
-    "https://*.gambling",
-    "http://omegle.com",
-    "https://omegle.com",
-    "http://tiktok.com",
-    "https://tiktok.com"
-  ],
-  "URLAllowlist": [
-    "http://*.wikipedia.org",
-    "https://*.wikipedia.org",
-    "http://*.khanacademy.org",
-    "https://*.khanacademy.org",
-    "http://*.scratch.mit.edu",
-    "https://*.scratch.mit.edu"
+  "EncryptedClientHelloEnabled": false,
+  "BrowserGuestModeEnabled": false,
+  "ExtensionInstallBlocklist": [
+    "*"
   ]
 }

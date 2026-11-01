@@ -145,15 +145,36 @@ Look for any line marked **FAIL** that mentions DNS or web. If you see one, ask 
 
 ## Other web browsers
 
-The filter checks every connection a child's account makes, whichever browser they use. Family Linux also applies its browser settings (private windows off, SafeSearch on, developer tools off) to these browsers:
+The filter works the same way whichever browser your child uses. It does not live inside the browser: it checks every connection your child's account makes. A browser you install later is filtered from the moment it is installed.
+
+Family Linux also switches on its browser settings in these browsers: private and guest windows off, SafeSearch on, YouTube restricted, developer tools off, and the browser's own "secure DNS" off.
 
 | Browser | Filter applies | Browser settings applied |
 |---|---|---|
-| Firefox (installed with Family Linux), Chromium, Google Chrome, Microsoft Edge, Brave from Brave's own website | Yes | Should be, but not yet checked on an installed system |
-| Brave from Brave's own repository, Firefox, Chromium | Yes | Should be, but not yet checked on an installed system |
+| Google Chrome | Yes | Yes, checked on a Family Linux computer |
+| Firefox (installed with Family Linux) | Yes | Yes (the settings file is in place; not yet checked in Firefox's own settings page) |
+| Chromium, Microsoft Edge, Brave from Brave's own website | Yes | Should be, but not yet checked on a Family Linux computer |
 | Any other browser | Yes | No |
 
-If a browser shows nothing at all for your child, even allowed sites, the browser is probably using its own "secure DNS" setting. The filter refuses those connections on purpose, so nothing gets around it. Turn off secure DNS in that browser's settings, or use Firefox instead. To check, run this and look for "not returned by an allowed lookup":
+### Installing Google Chrome
+
+Google Chrome is the most widely used browser. To install it:
+
+1. Sign in with your own (parent) account.
+2. In Firefox, go to google.com/chrome and download Chrome. Choose the Debian/Ubuntu (.deb) download. It is saved in your Downloads folder.
+3. Open Konsole (press Ctrl+Alt+T), type this line, press Enter, and enter your password when asked:
+
+   ```
+   sudo apt install ~/Downloads/google-chrome-stable_current_*.deb
+   ```
+
+Chrome adds Google's software source to the computer, so Chrome updates appear with the computer's other updates in Discover. The automatic security updates cover Debian's own software only, so install those updates from Discover now and then.
+
+Chrome appears in your children's menus straight away for the 10 to 13 and 14 and over age settings. For a child under 10, turn it on in Family Controls under Apps. When your child opens Chrome, it shows "Your device is managed by your organization". This is expected: it is how Family Linux applies the browser settings.
+
+### If a browser shows nothing at all
+
+If a browser shows nothing at all for your child, even allowed sites, it is probably using its own "secure DNS" setting. The filter refuses those connections on purpose, so nothing gets around it. Turn off secure DNS in that browser's settings, or use Chrome or Firefox instead. To check, run this and look for "not returned by an allowed lookup":
 
 ```
 sudo journalctl -u family-dnsd --since "10 min ago" | grep refuse

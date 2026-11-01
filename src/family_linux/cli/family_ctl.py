@@ -513,9 +513,13 @@ class FamilyCtl:
             else:
                 record("System time zone matches the policy", True, f"no time zone in the policy; system uses {system_tz}")
 
-            kiosk = CHILD_KDEGLOBALS_PATH.read_text(encoding="utf-8") if CHILD_KDEGLOBALS_PATH.exists() else ""
-            pam = SDDM_PAM_PATH.read_text(encoding="utf-8") if SDDM_PAM_PATH.exists() else ""
-            record("Alt+F2 run dialog and shell access locked for children (Plasma kiosk)", lockdown_in_place(kiosk, pam), f"{CHILD_KDEGLOBALS_PATH}, {SDDM_PAM_PATH}")
+            if SDDM_PAM_PATH.exists():
+                kiosk = CHILD_KDEGLOBALS_PATH.read_text(encoding="utf-8") if CHILD_KDEGLOBALS_PATH.exists() else ""
+                pam = SDDM_PAM_PATH.read_text(encoding="utf-8")
+                record("Alt+F2 run dialog and shell access locked for children (Plasma kiosk)", lockdown_in_place(kiosk, pam), f"{CHILD_KDEGLOBALS_PATH}, {SDDM_PAM_PATH}")
+            else:
+                # The lockdown applies to SDDM sessions; without SDDM there is no desktop sign-in to lock.
+                skip("Alt+F2 run dialog and shell access locked for children (Plasma kiosk)", f"{SDDM_PAM_PATH} not found (SDDM is not installed)")
             for child in policy.children:
                 ok, detail = startup_locked(Path("/home"), child.username)
                 record(f"Sign-in startup files locked for '{child.username}'", ok, detail)

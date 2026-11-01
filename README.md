@@ -189,6 +189,7 @@ Implemented (prototype level):
 Status of the Debian base (see [DEV_HIST.md](DEV_HIST.md) for the checks and the open items):
 
 - An unattended install of Debian 13.7.0 with KDE Plasma (arm64 ISO, VirtualBox 7.2.20 on Apple silicon) completed. The first boot applied the policy with no warnings and the machine reached its login prompt.
+- Session 28: the web filter works with any browser, because it is network-level. Google Chrome (the most used browser) was installed and checked as a child: it opens confined, allowed and ECH sites load, blocked sites do not, and `chrome://policy` shows every managed setting. See `docs/web-filtering-guide.md`.
 - Session 27 (UAT): Family Controls failed to load (missing `pkexec`), and children's Firefox failed to start (the child AppArmor profile) and then could not load sites (lookups went around the web filter through nss-resolve). All three are fixed and were checked in a VM; see DEV_HIST.
 - Checked on the installed desktop (VirtualBox, arm64): the child is listed on the SDDM login screen and signs in to Plasma; the Family wallpaper appears at first login; Alt+F2 and Ctrl+Alt+T do nothing for the child while the parent's Ctrl+Alt+T opens Konsole; a child's package install is refused without authentication; `family-ctl verify` passes.
 - Not yet checked: Discover's password prompt in the child's desktop, Firefox ESR's `about:policies`, and whether the pinned System Settings launcher on the child's panel still opens. See DEV_HIST open items.
@@ -207,8 +208,7 @@ Not yet implemented, or not validated:
 Repository status (checked with `gh` on 2026-11-01):
 
 - Default branch: `main`. It includes PR #6 (`arm64-iso`) and PR #7 (`debian-kde`, merged as `d0152db`, the Debian rebuild from Session 25). CI passed on that merge. CI runs on pushes to `main` and on pull requests into `main`.
-- Working branch: `debian-kde`. Its commits after PR #7 are not on `main`: the CI note (`c797300`), the appliance power-off fix (`b0cfd90`), the interactive ISO (`8266412`), the Session 26 review fixes (`0887f34`), and the Session 27 UAT fixes. They need a new pull request into `main`. Until one is open they have no CI, so the new Debian 13 container job and the `Debian install` workflow have not run yet.
-- Open pull requests: none.
+- Working branch: `debian-kde`, in pull request [#8](https://github.com/lukecarnold-jpg/family-linux/pull/8) into `main` (interactive ISO, appliance fixes, Session 26 review fixes, Session 27 UAT fixes, Session 28 browser and CI fixes). Its first CI run passed the full QEMU install of the amd64 ISO, the ISO check, the unit tests and the integration job. The Debian 13 container and live-apply jobs failed; the causes are fixed in the Session 28 commit (DEV_HIST Session 28). PR #8 is merged once its CI passes.
 
 Design documents:
 

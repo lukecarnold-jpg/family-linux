@@ -286,3 +286,26 @@ def test_child_profile_lets_desktop_apps_run_but_still_denies_shells():
     for rule in ("deny /{,usr/}bin/{,ba,da,z,fi}sh x,", "deny /usr/bin/pkexec x,", "deny /usr/bin/sudo x,",
                  "deny network inet raw,"):
         assert rule in profile, rule
+
+
+def test_chrome_policy_keeps_the_childs_filter_able_to_see_site_names():
+    from family_linux.models import WebFilterPolicy
+    from family_linux.security.browser import BrowserPolicyManager
+
+    manager = BrowserPolicyManager(SystemAdapter(dry_run=True))
+    chrome = manager.generate_chromium_policy(WebFilterPolicy())
+    assert chrome["EncryptedClientHelloEnabled"] is False
+    assert chrome["DnsOverHttpsMode"] == "off"
+    assert chrome["BrowserGuestModeEnabled"] is False and chrome["IncognitoModeAvailability"] == 1
+    assert chrome["ForceYouTubeRestrict"] == 2 and chrome["ForceGoogleSafeSearch"] is True
+    firefox = manager.generate_firefox_policy(WebFilterPolicy())["policies"]["Preferences"]
+    assert firefox["network.dns.echconfig.enabled"] is False and firefox["network.trr.mode"] == 5
+
+
+def test_chrome_can_run_for_a_child_and_is_approved_where_chromium_is():
+    from family_linux.models import DEFAULT_APPROVED_APPS, AgeTier
+    from family_linux.security.apparmor import CHILD_SESSION_PROFILE
+
+    assert "/opt/** mrix," in CHILD_SESSION_PROFILE
+    for tier in (AgeTier.PRE_TEEN, AgeTier.TEEN):
+        assert "google-chrome" in DEFAULT_APPROVED_APPS[tier.value]
