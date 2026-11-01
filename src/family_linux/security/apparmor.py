@@ -24,9 +24,38 @@ profile family-linux-child flags=(attach_disconnected) {
   #include <abstractions/user-tmp>
   #include <abstractions/fonts>
   #include <abstractions/freedesktop.org>
+  # Desktop apps (Firefox, LibreOffice, VLC): display, graphics, sound, session bus, certificates.
+  # Without these the profile stopped Firefox from starting at all (seen on Debian 13).
+  #include <abstractions/X>
+  #include <abstractions/wayland>
+  #include <abstractions/dri-common>
+  #include <abstractions/mesa>
+  #include <abstractions/audio>
+  #include <abstractions/dbus-session-strict>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
 
-  # Allow basic read access to common system libraries
-  /usr/lib/** mr,
+  dbus,
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network netlink raw,
+  network unix,
+  unix,
+  # Firefox's own content sandbox uses user namespaces; without them it runs less isolated. The
+  # two capabilities apply only inside that namespace (a child has none in the real system).
+  userns,
+  capability sys_admin,
+  capability sys_chroot,
+  signal (send, receive) peer=family-linux-child,
+  ptrace (read, trace) peer=family-linux-child,
+
+  # System libraries and the helpers apps start from them (Firefox runs
+  # /usr/lib/firefox-esr/firefox-esr for every content process)
+  /usr/lib/** mrix,
+  # Apps installed outside Debian's packages: Google Chrome lives in /opt/google/chrome
+  /opt/** mrix,
   /usr/lib64/** mr,
   /lib/** mr,
   /lib64/** mr,
@@ -35,9 +64,24 @@ profile family-linux-child flags=(attach_disconnected) {
   # The deny rules below take precedence over these allow rules.
   /etc/** r,
   /usr/share/** r,
+  /usr/local/share/** r,
   /usr/bin/** ix,
   /usr/libexec/** ix,
   /bin/** ix,
+  # Chrome's sandbox lists /proc itself; without the folder rule it stopped at start-up
+  @{PROC}/ r,
+  @{PROC}/** r,
+  /dev/udmabuf rw,
+  # Chrome's crash reporter asks for ptrace; children's browsers do not need crash reports
+  deny capability sys_ptrace,
+  # Apps do not write to their own install folders (Chrome tries to make one under /opt)
+  deny /opt/** w,
+  owner @{PROC}/@{pid}/** rw,
+  /sys/** r,
+  /dev/ r,
+  deny /var/cache/fontconfig/ w,
+  owner /dev/shm/** rwk,
+  owner /run/user/*/** rwkl,
 
   # Deny direct access to administrative and sensitive directories
   deny /etc/shadow* rwk,
@@ -62,12 +106,16 @@ profile family-linux-child flags=(attach_disconnected) {
   deny /{,usr/}bin/{gnome-terminal*,xterm,uxterm,konsole,kgx,xfce4-terminal,tilix,terminator,lxterminal,mate-terminal,rxvt*,st,alacritty,kitty,foot} x,
   deny /usr/libexec/gnome-terminal-* x,
 
-  # Child home access
-  owner @{HOME}/** rw,
+  # Child home access, with file locks (Firefox locks its profile folder; without k it reported
+  # that another copy was already running)
+  owner @{HOME}/ r,
+  owner @{HOME}/** rwkl,
   owner @{HOME}/** mr,
 
-  # Deny raw network sockets
-  deny network raw,
+  # Deny raw packet sockets (netlink stays allowed: apps use it to watch the network)
+  deny network inet raw,
+  deny network inet6 raw,
+  deny network packet,
 }
 """
 

@@ -24,7 +24,13 @@ from family_linux.models import (
     DNSProvider,
     DEFAULT_APPROVED_APPS,
 )
-from family_linux.provisioner.system import SystemProvisioner
+from family_linux.provisioner.system import (
+    APP_LAYERS,
+    CHILD_ADDED_LAYERS,
+    CHILD_SIGN_IN_LAYERS,
+    WEB_LAYERS,
+    SystemProvisioner,
+)
 from family_linux.screentime.tracker import ScreenTimeTracker
 from family_linux.audit.logger import AuditLogger
 from family_linux.security.adapter import SystemAdapter
@@ -33,7 +39,10 @@ from family_linux.security.apparmor import PROFILE_PATH
 from family_linux.security.browser import BRAVE_POLICY_PATH, CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
 from family_linux.security.password_policy import PAM_PASSWD_PATH, block_in_place
 from family_linux.security.package_gate import PackageInstallGate
-from family_linux.security.desktop_lockdown import KDEGLOBALS_PATH, lockdown_in_place
+from family_linux.security.desktop_lockdown import CHILD_KDEGLOBALS_PATH, SDDM_PAM_PATH, lockdown_in_place
+from family_linux.security.child_startup import startup_locked
+from family_linux.security.dns_filter import NSSWITCH_PATH, lookups_use_dns
+from family_linux.provisioner.firstboot import INSTALL_FAILURES_PATH, installer_failures
 from family_linux.security.users import SUDOERS_FILE
 from family_linux.security.dns_gateway import clear_request, load_requests
 from family_linux.security.web_gateway import REQUESTS_PATH
@@ -156,7 +165,7 @@ class FamilyCtl:
                 password=args.password,
             )
             policy.children.append(child)
-            self.provisioner.apply_policy(policy, reason=f"Added child {args.username}")
+            self.provisioner.apply_policy(policy, reason=f"Added child {args.username}", layers=CHILD_ADDED_LAYERS)
             print(f"[OK] Child account '{args.username}' created successfully with {tier} tier preset.")
 
         elif args.user_action == "disable":
@@ -169,7 +178,7 @@ class FamilyCtl:
             if not found:
                 print(f"[ERROR] Child user '{args.username}' not found.")
                 sys.exit(1)
-            self.provisioner.apply_policy(policy, reason=f"Disabled child {args.username}")
+            self.provisioner.apply_policy(policy, reason=f"Disabled child {args.username}", layers=CHILD_SIGN_IN_LAYERS)
             print(f"[OK] Child account '{args.username}' disabled.")
 
         elif args.user_action == "enable":
@@ -182,7 +191,7 @@ class FamilyCtl:
             if not found:
                 print(f"[ERROR] Child user '{args.username}' not found.")
                 sys.exit(1)
-            self.provisioner.apply_policy(policy, reason=f"Enabled child {args.username}")
+            self.provisioner.apply_policy(policy, reason=f"Enabled child {args.username}", layers=CHILD_SIGN_IN_LAYERS)
             print(f"[OK] Child account '{args.username}' enabled.")
 
         elif args.user_action == "remove":
@@ -224,7 +233,7 @@ class FamilyCtl:
                 sys.exit(1)
             if args.app not in child.app_policy.approved_apps:
                 child.app_policy.approved_apps.append(args.app)
-                self.provisioner.apply_policy(policy, reason=f"Approved {args.app} for {child.username}")
+                self.provisioner.apply_policy(policy, reason=f"Approved {args.app} for {child.username}", layers=APP_LAYERS)
                 print(f"[OK] Approved application '{args.app}' for '{child.username}'.")
             else:
                 print(f"Application '{args.app}' is already approved for '{child.username}'.")
@@ -236,7 +245,7 @@ class FamilyCtl:
                 sys.exit(1)
             if args.app in child.app_policy.approved_apps:
                 child.app_policy.approved_apps.remove(args.app)
-                self.provisioner.apply_policy(policy, reason=f"Revoked {args.app} for {child.username}")
+                self.provisioner.apply_policy(policy, reason=f"Revoked {args.app} for {child.username}", layers=APP_LAYERS)
                 print(f"[OK] Revoked application '{args.app}' for '{child.username}'.")
             else:
                 print(f"Application '{args.app}' was not in the approved list for '{child.username}'.")
@@ -304,7 +313,7 @@ class FamilyCtl:
             for c in targets:
                 if args.domain not in c.web_filter.blocked_domains:
                     c.web_filter.blocked_domains.append(args.domain)
-            self.provisioner.apply_policy(policy, reason=f"Blocked domain {args.domain}")
+            self.provisioner.apply_policy(policy, reason=f"Blocked domain {args.domain}", layers=WEB_LAYERS)
             print(f"[OK] Blocked '{args.domain}' for {self._describe(targets)}.")
 
         elif args.web_action == "allow":
@@ -314,7 +323,7 @@ class FamilyCtl:
                     c.web_filter.allowed_domains.append(args.domain)
                 if args.domain in c.web_filter.blocked_domains:
                     c.web_filter.blocked_domains.remove(args.domain)
-            self.provisioner.apply_policy(policy, reason=f"Allowed domain {args.domain}")
+            self.provisioner.apply_policy(policy, reason=f"Allowed domain {args.domain}", layers=WEB_LAYERS)
             print(f"[OK] Allowed '{args.domain}' for {self._describe(targets)}.")
 
         elif args.web_action == "remove":
@@ -323,7 +332,7 @@ class FamilyCtl:
                 for rules in (c.web_filter.blocked_domains, c.web_filter.allowed_domains):
                     if args.domain in rules:
                         rules.remove(args.domain)
-            self.provisioner.apply_policy(policy, reason=f"Removed web rule {args.domain}")
+            self.provisioner.apply_policy(policy, reason=f"Removed web rule {args.domain}", layers=WEB_LAYERS)
             print(f"[OK] Removed rules for '{args.domain}' for {self._describe(targets)}.")
 
         elif args.web_action == "requests":
@@ -344,7 +353,7 @@ class FamilyCtl:
                 child.web_filter.allowed_domains.append(args.domain)
             if args.domain in child.web_filter.blocked_domains:
                 child.web_filter.blocked_domains.remove(args.domain)
-            self.provisioner.apply_policy(policy, reason=f"Approved {args.domain} for {child.username}")
+            self.provisioner.apply_policy(policy, reason=f"Approved {args.domain} for {child.username}", layers=WEB_LAYERS)
             clear_request(REQUESTS_PATH, child.username, args.domain)
             print(f"[OK] Approved '{args.domain}' for '{child.username}'.")
 
@@ -443,8 +452,12 @@ class FamilyCtl:
                 "AppArmor child profile loaded in enforce mode",
                 "Unattended security updates enabled",
                 "Parent password rules enforced by PAM",
+                "Name lookups go through DNS (children's web filter sees them)",
                 "Software changes need the parent's password (polkit rule)",
-                "Alt+F2 run dialog and shell access locked (Plasma kiosk)",
+                "Flatpak and Snap removed and pinned (no install path around the parent)",
+                "Alt+F2 run dialog and shell access locked for children (Plasma kiosk)",
+                "Children's sign-in startup files locked",
+                "Installer finished every step",
                 "System time zone matches the policy",
             ):
                 skip(name, "live check runs only on Linux")
@@ -500,14 +513,35 @@ class FamilyCtl:
             else:
                 record("System time zone matches the policy", True, f"no time zone in the policy; system uses {system_tz}")
 
-            kiosk = KDEGLOBALS_PATH.read_text(encoding="utf-8") if KDEGLOBALS_PATH.exists() else ""
-            record("Alt+F2 run dialog and shell access locked (Plasma kiosk)", lockdown_in_place(kiosk), str(KDEGLOBALS_PATH))
+            if SDDM_PAM_PATH.exists():
+                kiosk = CHILD_KDEGLOBALS_PATH.read_text(encoding="utf-8") if CHILD_KDEGLOBALS_PATH.exists() else ""
+                pam = SDDM_PAM_PATH.read_text(encoding="utf-8")
+                record("Alt+F2 run dialog and shell access locked for children (Plasma kiosk)", lockdown_in_place(kiosk, pam), f"{CHILD_KDEGLOBALS_PATH}, {SDDM_PAM_PATH}")
+            else:
+                # The lockdown applies to SDDM sessions; without SDDM there is no desktop sign-in to lock.
+                skip("Alt+F2 run dialog and shell access locked for children (Plasma kiosk)", f"{SDDM_PAM_PATH} not found (SDDM is not installed)")
+            for child in policy.children:
+                ok, detail = startup_locked(Path("/home"), child.username)
+                record(f"Sign-in startup files locked for '{child.username}'", ok, detail)
+            if INSTALL_FAILURES_PATH.exists():
+                failed = installer_failures()
+                record("Installer finished every step", not failed, "; ".join(failed) or str(INSTALL_FAILURES_PATH))
+            else:
+                skip("Installer finished every step", "not installed from the Family Linux ISO")
+
+            nsswitch = NSSWITCH_PATH.read_text(encoding="utf-8") if NSSWITCH_PATH.exists() else ""
+            record("Name lookups go through DNS (children's web filter sees them)", lookups_use_dns(nsswitch), f"{NSSWITCH_PATH}: hosts line")
 
             package_gate = PackageInstallGate()
             record(
                 "Software changes need the parent's password (polkit rule)",
                 package_gate.is_in_place([c.username for c in policy.children]),
                 str(package_gate.rule_path),
+            )
+            record(
+                "Flatpak and Snap removed and pinned (no install path around the parent)",
+                package_gate.bypasses_removed(),
+                str(package_gate.pin_path),
             )
 
             updates = _probe(["systemctl", "is-enabled", "unattended-upgrades"])

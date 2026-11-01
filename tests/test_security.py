@@ -181,39 +181,50 @@ def test_child_desktop_filters_do_not_confine_when_apparmor_inactive(tmp_path):
     assert not adapter.simulated_files
 
 
-def test_desktop_lockdown_sets_the_plasma_kiosk_restrictions_for_every_account():
+def test_desktop_lockdown_applies_the_kiosk_to_children_only(tmp_path):
     from family_linux.security.desktop_lockdown import (
-        KDEGLOBALS_PATH, LOCKED_RESTRICTIONS, DesktopLockdown, lockdown_in_place, with_lockdown,
+        CHILD_KDEGLOBALS_PATH, ENV_CONF_PATH, DesktopLockdown, lockdown_in_place, render_pam_block,
     )
 
+    pam = tmp_path / "sddm"
     adapter = SystemAdapter(dry_run=True)
-    warnings = DesktopLockdown(adapter).apply()
-    assert warnings == []
-    written = adapter.simulated_files[str(KDEGLOBALS_PATH)]
-    assert "[KDE Action Restrictions][$i]" in written
+    assert DesktopLockdown(adapter, pam_path=pam, system_kdeglobals=tmp_path / "kdeglobals").apply() == []
+    kiosk = adapter.simulated_files[str(CHILD_KDEGLOBALS_PATH)]
+    assert "[KDE Action Restrictions][$i]" in kiosk
     for restriction in ("shell_access=false", "run_command=false", "action/run_command=false", "custom_config=false"):
-        assert restriction in written
-    assert lockdown_in_place(written)
-    assert written == with_lockdown("")
-    assert all(item in LOCKED_RESTRICTIONS for item in ("shell_access=false", "run_command=false"))
+        assert restriction in kiosk
+    assert "XDG_CONFIG_DIRS\tOVERRIDE=/etc/xdg/family-linux-children:/etc/xdg" in adapter.simulated_files[str(ENV_CONF_PATH)]
+    written_pam = adapter.simulated_files[str(pam)]
+    assert "pam_succeed_if.so quiet user notingroup family-children" in written_pam
+    # The skip must come straight before the pam_env line, or it would skip the wrong rule.
+    block = render_pam_block()
+    assert block[1].startswith("session [success=1 default=ignore]") and "pam_env.so" in block[2]
+    assert lockdown_in_place(kiosk, written_pam)
 
 
-def test_desktop_lockdown_keeps_the_rest_of_kdeglobals_and_applies_once():
-    from family_linux.security.desktop_lockdown import with_lockdown
+def test_pam_block_keeps_sddms_own_rules_and_applies_once():
+    from family_linux.security.desktop_lockdown import with_pam_block
 
-    distro = "[General]\nBrowserApplication=firefox-esr.desktop\n\n[KDE]\nLookAndFeelPackage=org.kde.breeze.desktop\n"
-    once = with_lockdown(distro)
-    assert "BrowserApplication=firefox-esr.desktop" in once and "LookAndFeelPackage=org.kde.breeze.desktop" in once
-    assert with_lockdown(once) == once  # applying again leaves one copy
-    assert once.count("[KDE Action Restrictions][$i]") == 1
+    sddm = "#%PAM-1.0\n@include common-auth\nsession required pam_limits.so\n@include common-session\n"
+    once = with_pam_block(sddm)
+    assert once.startswith(sddm.rstrip("\n"))
+    assert with_pam_block(once) == once
+    assert once.count("pam_env.so") == 1
 
 
-def test_desktop_lockdown_rewrites_a_block_that_has_drifted():
-    from family_linux.security.desktop_lockdown import lockdown_in_place, with_lockdown
+def test_lockdown_removes_the_old_system_wide_block_so_the_parent_gets_a_terminal_back(tmp_path):
+    from family_linux.security.desktop_lockdown import BEGIN_MARKER, END_MARKER, without_system_block
 
-    drifted = with_lockdown("").replace("shell_access=false", "shell_access=true")
-    assert not lockdown_in_place(drifted)
-    assert lockdown_in_place(with_lockdown(drifted))
+    old = "[General]\nBrowserApplication=firefox-esr.desktop\n\n" + "\n".join(
+        [BEGIN_MARKER, "[KDE Action Restrictions][$i]", "shell_access=false", END_MARKER]) + "\n"
+    cleaned = without_system_block(old)
+    assert "shell_access" not in cleaned and "BrowserApplication=firefox-esr.desktop" in cleaned
+
+
+def test_lockdown_check_fails_when_the_pam_rule_is_missing():
+    from family_linux.security.desktop_lockdown import lockdown_in_place, render_child_kdeglobals
+
+    assert not lockdown_in_place(render_child_kdeglobals(), "@include common-session\n")
 
 
 def test_terminal_programs_are_blocked_for_children():
@@ -235,3 +246,66 @@ def test_hosts_blocklist_skips_wildcards_and_reports_them(tmp_path, monkeypatch)
     hosts = adapter.simulated_files["/etc/hosts"]
     assert "0.0.0.0 omegle.com" in hosts
     assert "porn" not in hosts
+
+
+DEBIAN_NSSWITCH = (
+    "passwd:         files systemd\n"
+    "hosts:          files myhostname mdns4_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] dns\n"
+    "networks:       files\n"
+)
+
+
+def test_lookups_are_routed_through_dns_so_the_child_gateway_sees_them():
+    from family_linux.security.dns_filter import hosts_without_nss_resolve, lookups_use_dns
+
+    assert not lookups_use_dns(DEBIAN_NSSWITCH)
+    fixed = hosts_without_nss_resolve(DEBIAN_NSSWITCH)
+    hosts = next(line for line in fixed.splitlines() if line.startswith("hosts:"))
+    assert hosts.split()[1:] == ["files", "myhostname", "mdns4_minimal", "[NOTFOUND=return]", "dns"]
+    assert lookups_use_dns(fixed)
+    assert "passwd:         files systemd" in fixed  # other lines untouched
+    assert hosts_without_nss_resolve(fixed) == fixed
+
+
+def test_web_layer_removes_and_pins_nss_resolve(tmp_path):
+    from family_linux.security.dns_filter import NSS_RESOLVE_PIN_PATH, DNSFilterManager
+
+    adapter = SystemAdapter(dry_run=True)
+    DNSFilterManager(adapter).route_lookups_through_dns(nsswitch_path=tmp_path / "missing")
+    assert ["apt-get", "purge", "-y", "-q", "libnss-resolve"] in adapter.executed_commands
+    assert "Pin-Priority: -1" in adapter.simulated_files[str(NSS_RESOLVE_PIN_PATH)]
+
+
+def test_child_profile_lets_desktop_apps_run_but_still_denies_shells():
+    from family_linux.security.apparmor import CHILD_SESSION_PROFILE as profile
+
+    # Firefox: its own binary in /usr/lib, profile-folder locks, network, display, its sandbox
+    for rule in ("/usr/lib/** mrix,", "owner @{HOME}/** rwkl,", "network inet stream,",
+                 "#include <abstractions/wayland>", "userns,", "dbus,"):
+        assert rule in profile, rule
+    for rule in ("deny /{,usr/}bin/{,ba,da,z,fi}sh x,", "deny /usr/bin/pkexec x,", "deny /usr/bin/sudo x,",
+                 "deny network inet raw,"):
+        assert rule in profile, rule
+
+
+def test_chrome_policy_keeps_the_childs_filter_able_to_see_site_names():
+    from family_linux.models import WebFilterPolicy
+    from family_linux.security.browser import BrowserPolicyManager
+
+    manager = BrowserPolicyManager(SystemAdapter(dry_run=True))
+    chrome = manager.generate_chromium_policy(WebFilterPolicy())
+    assert chrome["EncryptedClientHelloEnabled"] is False
+    assert chrome["DnsOverHttpsMode"] == "off"
+    assert chrome["BrowserGuestModeEnabled"] is False and chrome["IncognitoModeAvailability"] == 1
+    assert chrome["ForceYouTubeRestrict"] == 2 and chrome["ForceGoogleSafeSearch"] is True
+    firefox = manager.generate_firefox_policy(WebFilterPolicy())["policies"]["Preferences"]
+    assert firefox["network.dns.echconfig.enabled"] is False and firefox["network.trr.mode"] == 5
+
+
+def test_chrome_can_run_for_a_child_and_is_approved_where_chromium_is():
+    from family_linux.models import DEFAULT_APPROVED_APPS, AgeTier
+    from family_linux.security.apparmor import CHILD_SESSION_PROFILE
+
+    assert "/opt/** mrix," in CHILD_SESSION_PROFILE
+    for tier in (AgeTier.PRE_TEEN, AgeTier.TEEN):
+        assert "google-chrome" in DEFAULT_APPROVED_APPS[tier.value]

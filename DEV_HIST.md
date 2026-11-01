@@ -613,6 +613,12 @@ Request from the user: act on the review's list, starting with item 1.
 | VM install, arm64, VirtualBox 7.2.20 (second run, package list fixed) | The package stage completed. The late command ran. First boot printed `First-boot provisioning complete: 24 actions` and no apply warnings. The VM reached `family-linux login:` |
 | VM: `smartmontools` | Failed to start (`[FAILED] Failed to start smartmontools.service`). Not investigated. Not expected to matter on a virtual disk |
 
+**CI.** Pull request #7 (`debian-kde` into `main`) was opened to run the workflow, which triggers only on pull requests into `main`. All 13 jobs passed: unit tests on Python 3.9 to 3.13 on Ubuntu and macOS, the privileged Linux integration job, the live-apply job on the Ubuntu runner, and the amd64 ISO build and check. These jobs do not install Debian. The arm64 install was checked in VirtualBox only.
+
+**Appliance.** `scripts/build-virtualbox-vm.sh` built `dist/family-linux-debian-stable-arm64.ova` (4.5 GB) from the same install: parent `parent`, child `child` (tier `pre_teen`). The first boot completed with 24 actions. **Defect 4:** the earlier appliance attempt waited 5 minutes for an ACPI power button that the arm64 guest ignores, so the script exited before the export. **Fix:** after 2 minutes the script powers the VM off and then exports. The first boot had already written its marker, so nothing was left unapplied. The exported appliance has not been imported or booted yet.
+
+**Interactive ISO.** The ISO's Install entry used to run unattended, so the installer never showed the user its screens. `MODE=interactive` (the new default) opens the Debian installer with the preseed answers filled in. `MODE=automated` keeps the old unattended entry, and the appliance build uses it. Both arm64 ISOs were built and checked: the interactive one boots to the Debian installer's language screen in VirtualBox (screenshot checked, temporary VM deleted). The amd64 interactive ISO was built and its GRUB entries checked. Its BIOS (isolinux) menu is not patched, so BIOS boot gets the stock installer without the Family Linux answers.
+
 **Not verified yet.** Each item below is also in the open items.
 
 - Child sign-in at SDDM with a nologin shell. The child is not yet confirmed to appear on the login screen or to start a Plasma session.
@@ -623,6 +629,97 @@ Request from the user: act on the review's list, starting with item 1.
 - Contents of `/var/log/family-linux-install.log` on the installed system.
 - The NetworkManager and systemd-resolved DNS filter on the running system.
 - amd64: no install has run, and the BIOS boot menu is not patched.
+
+## Session 26: review fixes, priority list items 1 to 16 (branch `debian-kde`)
+
+**Request.** Opus 5.5 reviewed the project and gave a priority list (CLAUDE.md, "Review"). The user asked for it to be worked through from item 1. Each item below gives the problem, the fix and the check.
+
+| # | Item | Fix | Checked by |
+|---|------|-----|------------|
+| 1 | The interactive ISO erased the disk without asking: the preseed answered the partitioning confirmations | `generate_preseed(unattended_disk=False)` leaves them out, and the installer stops at "Write the changes to disks?". `--unattended-disk` (automated builds only) answers them | `test_preseed.py`, including the wizard export |
+| 2 | Flatpak (per-user installs, no polkit) or Snap could install apps around the parent's approval | `package_gate.py` purges `flatpak`, `snapd` and Discover's Flatpak and Snap backends if present, and pins them at priority -1. `verify` checks this | `test_package_gate.py`; installed VM: `verify` PASS, pin in place |
+| 3 | It was unconfirmed that Discover can install from the Debian repositories | The PackageKit backend ships in `plasma-discover`. No change needed | Installed VM: `.../qt6/plugins/discover/packagekit-backend.so` present |
+| 4 | The kiosk lockdown also locked the parent out of a terminal. Worse, a child could bypass it, or run any command at sign-in: SDDM's session script sources `~/.profile` for a nologin shell, and `~/.config/plasma-workspace/env`, `autostart`, `environment.d` and `systemd/user` are child-writable | The kiosk moves to `/etc/xdg/family-linux-children/kdeglobals`, applied to `family-children` only by a PAM rule in `/etc/pam.d/sddm` that sets `XDG_CONFIG_DIRS`; the old system-wide block is removed. `child_startup.py` replaces the child's startup files and folders with empty, root-owned, immutable ones through `O_NOFOLLOW` descriptors | `test_security.py`, `test_child_startup.py`; installed VM: Alt+F2 and Ctrl+Alt+T do nothing for the child, the parent's Ctrl+Alt+T opens Konsole |
+| 5 | Late-command failures were silent | Each step reports failure to `/var/lib/family-linux/install-failures` (password hashes redacted) and `install-status`; first boot and `verify` report them | `test_preseed.py` runs the real script against a temporary target. Installed VM: the three `ufw` steps were reported (see defect A) |
+| 6 | Desktop behaviour was untested | Installed VM session, below | Screenshots |
+| 7 | The appliance was exported after a hard power-off | Appliance builds (`APPLIANCE=1`) write a flag; first boot powers off once when done | `test_firstboot_iso.py`; appliance build: "Appliance build: powering off", then export |
+| 8 | The Debian image's signature was not checked | `SHA512SUMS` is verified with `gpgv` against `config/keys/debian-cd-signing.gpg` (fingerprints checked against debian.org/CD/verify) | Real build: "Signature OK"; a tampered `SHA512SUMS` is rejected (gpgv exit 1) |
+| 9 | CI never ran on Debian | New `debian` job in `ci.yml` (Debian 13 container: package names against apt's index, tests, integration as root). New `debian-install.yml`: full install of the automated amd64 ISO under QEMU (weekly, on demand, on installer changes) | Not run yet (runs when pushed) |
+| 10 | The amd64 BIOS menu was not patched | `isolinux/txt.cfg` and `gtk.cfg` get the same arguments; automated ISOs get a 5-second BIOS timeout | amd64 builds: "Preseed added to 2 BIOS boot entries"; BIOS and UEFI boot records kept |
+| 11 | Every `family-ctl` change ran the full apply | The apply is split into named layers; changes re-apply only theirs (website rules: `web`; app approvals: `apps`; sign-in: `accounts`; new child: accounts, web, desktop, apps). The dashboard uses the same sets | `test_provisioning.py` |
+| 12 | The GRUB patching was untested inline Python | `provisioner/iso.py`, tested against Debian 13.7's own menus in `tests/fixtures/` | `test_iso.py`; rebuilt ISOs give the same entry counts as before |
+| 13 | The lock screen's wallpaper was not set | The wallpaper script also writes `kscreenlockerrc` | `test_firstboot_iso.py` |
+| 14 | `docs/roadmap.md` said "31 tests passing" | Points to DEV_HIST for the count | |
+| 15 | Automated builds pressed Enter with blind key codes | Automated ISOs have a 5-second GRUB timeout; the key presses are removed | `test_iso.py`; appliance build ran without them |
+| 16 | Housekeeping | The earlier build VMs were deleted; the first appliance is kept as `dist/...arm64.previous.ova` | |
+
+**Defects found while checking the installed system (appliance, VirtualBox 7.2.20, arm64).**
+
+- **A. `ufw` cannot run in the installer's chroot.** All three late-command `ufw` steps failed (reported by item 5). The firewall is applied by the first boot anyway (`verify`: "UFW active with deny incoming" PASS). **Fix:** the late command no longer runs `ufw`.
+- **B. The immutable flag was never set.** `chattr +i /proc/self/fd/N` fails on Debian 13 (e2fsprogs 1.47.2) with "Operation not supported while reading flags on /proc/self/fd/3". The same flag on the app-menu overrides folder was never set either (`lsattr`: no `i`). The overrides code only logs to the audit file, so this went unnoticed. The startup lock warned about it at first boot. A direct `FS_IOC_SETFLAGS` ioctl on the descriptor worked on the same system (`lsattr`: `----i---`). **Fix:** `child_dirs.set_immutable` uses the ioctl.
+- **C. The appliance showed a black screen.** The VM used the `qemuramfb` graphics adapter. Debian's arm64 kernel has no DRM driver for it, so there was no `/dev/dri`, only "EFI VGA", and SDDM had nothing to draw on. Plymouth also crashed. **Fix:** arm64 VMs use VMSVGA (vmwgfx), with 128 MB of video memory. With VMSVGA the same disk showed SDDM and Plasma.
+- **D. The exported appliance still showed a black screen, even with VMSVGA.** The export turns the VM's serial port off, but the installed kernel keeps `console=ttyAMA0` from the automated ISO (`/etc/default/grub`: `GRUB_CMDLINE_LINUX="console=ttyAMA0"`). Results on the same disk: with a file-backed serial port SDDM appeared, and with the port off or "disconnected" the screen stayed black. Removing the setting by hand and running `update-grub` brought SDDM back with no serial port. **Fix:** in appliance builds, first boot removes the build's serial console from `/etc/default/grub` and runs `update-grub` before it powers off. The build still watches that first boot on the serial log.
+- Not product defects, but each cost time: VirtualBox 7 NAT cannot reach the host's `127.0.0.1` through 10.0.2.2 by default, and VirtualBox's TCP serial mode allows only one connection (a port probe took it). The checks used typed commands, with output through `sudo tee /dev/ttyAMA0` to the serial log file.
+
+**Installed-system results** (first appliance of this session, before fixes A to C; VMSVGA set by hand):
+
+| Check | Result |
+|-------|--------|
+| SDDM lists the child and the parent ("Family Administrator"); session Plasma (Wayland) | Yes |
+| The child signs in with a nologin shell | Yes, Plasma desktop |
+| Family wallpaper at first login (child and parent) | Yes |
+| Child: Alt+F2 | Nothing opens |
+| Child: Ctrl+Alt+T | Nothing opens |
+| Parent: Ctrl+Alt+T | Konsole opens |
+| Child install (`runuser -u child -- pkcon install cowsay`) | "Failed to obtain authentication"; not installed |
+| `family-ctl verify` | All PASS except "Installer finished every step" (defect A) |
+| DNS | systemd-resolved active; global DNS 185.228.168.168 and 185.228.169.168 (family); the link also lists the router (192.168.0.1) |
+| Firefox ESR policy file | `/usr/lib/firefox-esr/distribution/policies.json` present (not yet checked in `about:policies`) |
+
+**Tests.** 274 passed, 5 skipped (Session 25 ended at 243).
+
+## Session 27: UAT failures, Family Controls and Firefox for children (branch `debian-kde`)
+
+**Request.** In UAT on the appliance, Family Controls failed to load for the parent, and Firefox would not start for the child ("already running", though no copy was open in the parent's account). The investigation used a fresh import of the appliance (VM "Family Linux Review", deleted afterwards), with output sent through `sudo tee /dev/ttyAMA0` to a file-backed serial port.
+
+**Defect 1: Family Controls could not run `pkexec`.** The window showed "Family Controls is locked. Could not run family-ctl: [Errno 2] No such file or directory: '/usr/bin/pkexec'". Debian 13 ships `pkexec` as a separate package (`apt-cache policy pkexec`: Installed (none), Candidate 126-2), and the KDE task does not install it. **Fix:** `pkexec` is in the preseed's package list. **Checked:** after `apt-get install pkexec` in the VM, the app showed the polkit prompt ("Authenticating as Family Administrator (parent)") and, after the password, the child and the website requests.
+
+**Defect 2: the child AppArmor profile stopped Firefox.** Children's approved apps start through `aa-exec -p family-linux-child`. On Ubuntu, Firefox was a snap and was not wrapped; on Debian it is a deb and is. Running Firefox as the child under the profile: `apparmor="DENIED" operation="exec" name="/usr/lib/firefox-esr/firefox-esr"`. The profile allowed only `mr` on `/usr/lib/**`. It also had no `k` (file locks) on the home folder, which is what makes Firefox report another copy as running. It had no network rules either, so all networking was denied, and no display, D-Bus or sound access. **Fix:** a desktop-ready profile: `/usr/lib/** mrix`, `owner @{HOME}/** rwkl`, inet, inet6 and netlink networking, the X, Wayland, DRI, Mesa, audio, D-Bus session, OpenSSL and certificate abstractions, `dbus`, `userns` with `sys_admin` and `sys_chroot` for Firefox's own sandbox (effective only inside its namespace), `/proc` and `/sys` reads. Every deny rule stays: shells, terminals, sudo, su, pkexec, apt, dpkg, sensitive files, and raw inet and packet sockets. **Checked:** iterated in the VM until confined Firefox rendered a page with no AppArmor denials and no sandbox warnings. A confined `env sh` is still refused ("Permission denied"). Firefox then opened for the child from the application launcher.
+
+**Defect 3: children's lookups went around their web filter, so every site failed.** With Firefox running, the child's pages failed with `PR_END_OF_FILE_ERROR`, and the gateway log showed 318 TLS refusals, all "address ... not returned by an allowed lookup", and no lookups from the child at all. `/etc/nsswitch.conf` had `hosts: files myhostname mdns4_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] dns`, with `libnss-resolve` installed (it comes with systemd-resolved on Debian 13). Lookups therefore went to systemd-resolved over D-Bus, not to DNS port 53, which is the only route the per-child gateway redirects. The family DNS servers themselves answered (checked with direct queries). **Fix:** the web layer purges `libnss-resolve` (its removal takes `resolve` out of the hosts line), pins it at -1, and removes any `resolve` still on the line; `verify` checks it. **Checked:** after the purge, `example.com` loaded for the child and `www.tiktok.com` (blocked by default) did not.
+
+**Tests.** 279 passed, 5 skipped.
+
+**Seen but not changed.** Firefox's own background services (`firefox.settings.services.mozilla.com`, `location.services.mozilla.com`) appear in the parent's website requests. Firefox's first-run privacy page on `www.mozilla.org` was also refused while lookups bypassed the gateway. That page should load now, but this was not re-checked. See the open items.
+
+## Session 28: web filtering for any browser, with Google Chrome first; CI on PR #8
+
+**Request.** Make the web filtering work regardless of the browser, focusing on the most installed one. Google Chrome has about 70% of desktop browser share (StatCounter, mid-2026), and Google now ships an arm64 Linux `.deb`.
+
+**Design.** The filter is network-level. The per-child DNS gateway and TLS name check are applied by nftables to each child's user ID, so they cover every browser and every program. A browser with its own DNS-over-HTTPS fails closed: its addresses never came from an allowed lookup. Only the in-browser settings are per browser.
+
+**What Chrome needed** (found by installing Chrome 156 for arm64 on the appliance and running it as the child):
+
+- **The child AppArmor profile stopped Chrome.** Chrome installs to `/opt/google/chrome`, which the profile did not let apps run from. After that was allowed, Chrome's sandbox stopped at start-up ("proc_util ... Permission denied", then "Zygote process exited prematurely"), because the profile allowed `/proc/**` but not the `/proc/` folder itself. **Fix:** `/opt/** mrix`, `@{PROC}/ r`, `/dev/udmabuf rw`; deny `sys_ptrace` (crash reporter) and writes under `/opt`.
+- **Encrypted Client Hello (on by default in Chrome) hides the site name the filter checks,** so the filter refused those connections. **Fix:** `EncryptedClientHelloEnabled: false` for Chrome, Chromium, Edge and Brave; `network.dns.echconfig.enabled` and `network.dns.http3_echconfig.enabled` false for Firefox.
+- **Guest windows** are private windows by another name. `BrowserGuestModeEnabled` follows the private-window setting. `ForceYouTubeRestrict` replaces `ForceYouTubeSafetyMode`, which `chrome://policy` reported as an error (deprecated).
+- **Chrome was not approved by default.** `google-chrome` is added wherever `chromium` is (10 to 13, 14 and over).
+
+**Checked on the appliance** (Chrome 156.0.8078.79, arm64; installed by the parent with `apt install` of Google's `.deb`):
+
+- The child's menu entry appeared by itself, approved and confined (`Exec=aa-exec -p family-linux-child -- /usr/bin/google-chrome-stable`).
+- Chrome opened for the child from the launcher and showed "Your device is managed by your organization".
+- `example.com` loaded; `www.tiktok.com` gave "This site can't be reached"; `www.cloudflare.com` (an ECH site) loaded.
+- `chrome://policy` showed every policy with status OK.
+
+**CI on PR #8 (first run of the new jobs).** The `Debian install` workflow passed: a full install of the automated amd64 ISO under QEMU, plus the first boot. Two jobs failed:
+
+- **Debian 13 container: the parent's password change failed.** `pam_pwquality` reported "/var/cache/cracklib/cracklib_dict.pwd: No such file or directory ... error loading dictionary". The dictionary is in `cracklib-runtime`, which is only a recommended package and is missing from installs without recommends. Without it every password change fails. **Fix:** `cracklib-runtime` is in the preseed and is installed by the password rules; the CI container installs it.
+- **Live apply (Ubuntu runner): the children's kiosk check failed.** The runner has no SDDM, so there is no `/etc/pam.d/sddm` to add the rule to. **Fix:** `verify` skips the check when SDDM is not installed. The job's later step grepped the old path `/etc/xdg/kdeglobals`; it now checks `/etc/xdg/family-linux-children/kdeglobals`.
+
+**Parent guide.** `docs/web-filtering-guide.md` explains that the filter covers every browser, lists what was checked per browser, and has steps for installing Chrome.
+
+**Tests.** 282 passed, 5 skipped.
 
 ## Open items, in priority order
 
@@ -636,12 +733,20 @@ Request from the user: act on the review's list, starting with item 1.
 8. Add a pre-apply plan (dry-run diff) and consider rollback.
 9. Packaging: install the console scripts and systemd units.
 10. Scrub or recreate backups that hold old plaintext passwords.
-11. Session 25: confirm a child can sign in on the SDDM login screen and start a Plasma session with a nologin shell.
-12. Session 25: confirm the wallpaper appears at first login, and that Alt+F2 and Ctrl+Alt+T are blocked for a child.
-13. Session 25: confirm Discover asks for the parent's password before a child's install, and that the PackageKit rule takes effect.
-14. Session 25: confirm Firefox ESR reads `/usr/lib/firefox-esr/distribution/policies.json` (`about:policies`).
-15. Session 25: read `/var/log/family-linux-install.log` on the installed system and check that every late-command step ran.
+11. Session 25, answered in Session 26: a child signs in to Plasma with the nologin shell.
+12. Session 25, answered in Session 26: the wallpaper appears at first login; Alt+F2 and Ctrl+Alt+T are blocked for a child.
+13. Session 25, partly answered in Session 26: the PackageKit rule refuses a child's install without authentication. Still to see: Discover's password prompt in the child's desktop.
+14. Session 25: confirm Firefox ESR reads `/usr/lib/firefox-esr/distribution/policies.json` (`about:policies`). The file is in place.
+15. Session 25, answered in Session 26: the late command now reports each failed step; the only failures were the `ufw` steps, now removed.
 16. Session 25: find out why `smartmontools` fails to start in the VM.
-17. Session 25: the Linux CI jobs still run on Ubuntu runners. Add a Debian job, or run the install check in a VM job.
-18. Session 25: amd64 has not been installed, and its BIOS (isolinux) boot menu is not patched.
+17. Session 25, done in Session 26: Debian 13 container job and a QEMU install workflow. Neither has run yet.
+18. Session 25, partly done in Session 26: the amd64 BIOS menu is patched. No amd64 install has run yet; the `Debian install` workflow will do one.
 19. Session 25: item 7 above is obsolete: Debian uses firefox-esr, not a snap.
+20. Session 26, answered: the rebuilt appliance (fix D, VMSVGA, serial port off as exported) shows SDDM with both accounts.
+23. Session 26: the child's panel has a pinned System Settings launcher (Plasma's default panel). The menu override hides System Settings from the menu; check whether the pinned launcher still opens it, and remove it from children's panels if so.
+21. Session 26: the parent's DNS also lists the router's server (from DHCP) beside the family servers. Children are unaffected (their DNS goes through the gateway). Decide whether the parent should use only the family servers.
+22. Session 26, answered: on the rebuilt appliance `lsattr` shows `i` on `~child/.profile`, `~child/.config/autostart`, `~child/.config/plasma-workspace/env` and `~child/.local/share/applications`, and `family-ctl verify` reports "All baseline checks passed".
+24. Session 27: Firefox's background services (`firefox.settings.services.mozilla.com`, which carries Firefox's security blocklists, and `location.services.mozilla.com`) show up as website requests for the parent. Decide whether to allow the Mozilla update and security services for children by default and leave them out of the requests list.
+25. Session 27, answered: on a fresh import of the rebuilt appliance (first boot: 26 actions, no warnings), Family Controls opened from the launcher and loaded after the polkit prompt; Firefox opened for the child from the launcher; `example.com` and Firefox's privacy page on mozilla.org loaded.
+26. Session 28: Chrome lets a child sign in to a Google account and sync. Decide whether to turn sign-in off for children (`BrowserSignin: 0`, `SyncDisabled`).
+27. Session 28: check the Brave, Edge and Chromium settings in each browser's policy page, as was done for Chrome.

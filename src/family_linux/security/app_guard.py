@@ -159,7 +159,7 @@ class AppGuard:
                         event_type="APP_OVERRIDES_UNLOCKED",
                         user=child.username,
                         severity="WARNING",
-                        details={"reason": "chattr +i failed; hidden apps can be deleted"},
+                        details={"reason": "immutable flag not set; hidden apps can be deleted"},
                     )
         finally:
             os.close(dir_fd)

@@ -99,3 +99,20 @@ def test_dry_run_writes_the_block_to_the_pam_path_without_touching_the_host(tmp_
     simulated = adapter.simulated_files[str(pam)]
     assert BEGIN_MARKER in simulated and "minlen=14" in simulated
     assert pam.read_text() == DEBIAN_PASSWD  # the real file is unchanged in a dry run
+
+
+def test_the_dictionary_pwquality_needs_is_installed_too(tmp_path):
+    # Without cracklib-runtime every password change failed: "error loading dictionary" (Debian 13 CI).
+    from family_linux.security.adapter import SystemAdapter
+    from family_linux.security.password_policy import ParentPasswordRules
+
+    class Missing(SystemAdapter):
+        def run_command(self, cmd, check=False):
+            result = super().run_command(cmd, check)
+            if cmd[:2] == ["dpkg", "-s"]:
+                result.returncode = 1
+            return result
+
+    adapter = Missing(dry_run=True)
+    ParentPasswordRules(adapter, pam_path=tmp_path / "passwd").apply(["kid"])
+    assert ["apt-get", "install", "-y", "-q", "cracklib-runtime"] in adapter.executed_commands

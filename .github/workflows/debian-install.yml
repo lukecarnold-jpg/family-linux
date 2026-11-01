@@ -1,0 +1,82 @@
+name: Debian install
+
+# A full unattended install of the automated amd64 ISO under QEMU (KVM, UEFI), followed by the first
+# boot. It takes 30 to 60 minutes, so it runs weekly, on demand, and on pull requests that change the
+# installer, not on every push.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+  pull_request:
+    branches: [ main ]
+    paths:
+      - "scripts/build-debian-iso.sh"
+      - "src/family_linux/provisioner/**"
+      - "src/family_linux/security/**"
+      - "config/**"
+      - ".github/workflows/debian-install.yml"
+
+jobs:
+  install:
+    name: Install the amd64 ISO and run the first boot (QEMU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Allow the runner to use KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf xorriso rsync gpgv
+          python3 -m pip install --user pyyaml
+
+      - name: Build the automated ISO
+        env:
+          ARCH: amd64
+          MODE: automated
+          PARENT_PASS: "CiParentPass-2026!"
+          CHILD_SPECS: "kid:Kid:pre_teen:ci-child-pass"
+          TIMEZONE: "UTC"
+        run: ./scripts/build-debian-iso.sh
+
+      - name: Install and first boot
+        run: |
+          code=$(ls /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd 2>/dev/null | head -n1)
+          vars=$(ls /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd 2>/dev/null | head -n1)
+          cp "$vars" vars.fd
+          qemu-img create -f qcow2 disk.qcow2 40G
+          # The disk is first in boot order: empty at first, so the ISO boots and installs; after the
+          # installer reboots, the installed system boots from the disk.
+          qemu-system-x86_64 -enable-kvm -machine q35 -cpu host -m 4096 -smp 2 \
+            -drive if=pflash,format=raw,readonly=on,file="$code" \
+            -drive if=pflash,format=raw,file=vars.fd \
+            -drive file=disk.qcow2,if=none,id=hd,format=qcow2 -device virtio-blk-pci,drive=hd,bootindex=1 \
+            -drive file=dist/family-linux-debian-stable-amd64-automated.iso,if=none,id=cd,media=cdrom,readonly=on \
+            -device ide-cd,drive=cd,bootindex=2 \
+            -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+            -display none -serial file:serial.log -daemonize -pidfile qemu.pid
+          deadline=$(( $(date +%s) + 100 * 60 ))
+          result=""
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            if grep -aq "First-boot provisioning complete" serial.log; then result=complete; break; fi
+            if grep -aq "First-boot provisioning failed" serial.log; then result=failed; break; fi
+            if ! kill -0 "$(cat qemu.pid)" 2>/dev/null; then result=stopped; break; fi
+            sleep 30
+          done
+          kill "$(cat qemu.pid)" 2>/dev/null || true
+          echo "Result: ${result:-timed out}"
+          tr -cd '[:print:]\n' < serial.log | grep -aE "First-boot|warning:" || true
+          test "$result" = complete
+          # An installer step that failed is a failure here, even though the first boot carried on.
+          if tr -cd '[:print:]\n' < serial.log | grep -aq "installer step failed"; then exit 1; fi
+
+      - name: Serial log (last 200 lines)
+        if: always()
+        run: tr -cd '[:print:]\n' < serial.log | tail -n 200 || true

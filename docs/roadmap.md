@@ -52,6 +52,6 @@
 - parental web control dashboard: complete
 - screen time and curfew daemon (`family-policyd`): complete
 - Debian preseed and late-command install workflow (KDE Plasma): complete, in VirtualBox on arm64; hardware and amd64 not yet validated
-- automated test suite (pytest): complete (31 tests passing)
+- automated test suite (pytest): complete (see DEV_HIST for the current count)
 - ISO build tooling: prototype complete
 - production-quality hardware validation: ongoing

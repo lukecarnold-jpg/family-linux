@@ -55,6 +55,10 @@ class BrowserPolicyManager:
                 "browser.safesearch.enabled": web_filter.safe_search_enforced,
                 "browser.urlbar.suggest.searches": True,
                 "network.trr.mode": 5,  # Disable DoH to preserve local parent DNS filtering
+                # Encrypted Client Hello hides the site name the child's filter checks, so the
+                # filter refuses those connections; with it off, those sites load.
+                "network.dns.echconfig.enabled": False,
+                "network.dns.http3_echconfig.enabled": False,
             },
         }
 
@@ -72,8 +76,13 @@ class BrowserPolicyManager:
             # 2 = Developer tools disabled
             "DeveloperToolsAvailability": 2 if web_filter.disable_developer_tools else 1,
             "ForceGoogleSafeSearch": web_filter.safe_search_enforced,
-            "ForceYouTubeSafetyMode": 2 if web_filter.safe_search_enforced else 0,  # 2 = Strict
+            "ForceYouTubeRestrict": 2 if web_filter.safe_search_enforced else 0,  # 2 = Strict
             "DnsOverHttpsMode": "off",  # Keep local DNS filter active
+            # Encrypted Client Hello (on by default in Chrome) hides the site name the child's filter
+            # checks, so the filter refuses those connections; with it off, those sites load.
+            "EncryptedClientHelloEnabled": False,
+            # Guest windows are private windows by another name
+            "BrowserGuestModeEnabled": not web_filter.block_incognito,
         }
 
         if web_filter.disable_extensions_install:

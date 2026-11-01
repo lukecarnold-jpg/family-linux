@@ -134,3 +134,73 @@ def test_late_script_is_valid_shell_even_with_quotes_in_a_child_name(tmp_path):
 def test_late_script_quotes_every_child_value_from_the_policy():
     policy = _policy(child_name="Kid; rm -rf /")
     assert f"-c {shlex.quote('Kid; rm -rf /')} " in _late(policy)
+
+
+def test_preseed_leaves_the_disk_erase_to_the_person_at_the_installer():
+    # An interactive install must stop at "Write the changes to disks?": no answer is preseeded.
+    text = _preseed()
+    for key in ("partman/confirm ", "partman/confirm_nooverwrite", "partman/choose_partition",
+                "partman-partitioning/confirm_write_new_label", "partman-lvm/confirm", "device_remove_lvm",
+                "device_remove_md"):
+        assert key not in text, key
+    assert "d-i partman-auto/choose_recipe select atomic" in text  # the layout is still suggested
+
+
+def test_unattended_disk_answers_the_erase_for_automated_builds():
+    text = _preseed(unattended_disk=True)
+    assert "d-i partman/confirm boolean true" in text
+    assert "d-i partman/confirm_nooverwrite boolean true" in text
+    assert "d-i partman/choose_partition select finish" in text
+
+
+def test_wizard_exports_a_confirming_preseed_unless_told_otherwise(monkeypatch, tmp_path):
+    import pytest
+    from family_linux.installer import wizard as wizard_module
+
+    for extra, expect_answer in (([], False), (["--unattended-disk"], True)):
+        out = tmp_path / ("auto" if extra else "ask") / "preseed.cfg"
+        monkeypatch.setattr("sys.argv", ["family-installer", "--non-interactive", "--parent-pass", PARENT_PASS,
+                                         "--export-preseed", str(out), *extra])
+        with pytest.raises(SystemExit) as exc:
+            wizard_module.main()
+        assert exc.value.code == 0
+        assert ("d-i partman/confirm boolean true" in out.read_text()) is expect_answer
+
+
+def test_failed_late_steps_are_listed_without_password_hashes(tmp_path):
+    # Runs the real script against a temporary target. A fake in-target fails every step it runs, and
+    # every path in the script is under $T or $PAYLOAD, so nothing outside tmp_path is touched.
+    import os
+
+    target = tmp_path / "target"
+    (target / "var" / "log").mkdir(parents=True)
+    payload = tmp_path / "payload"
+    payload.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "in-target").write_text("#!/bin/sh\nexit 1\n")
+    (fake_bin / "in-target").chmod(0o755)
+    script = tmp_path / "late-command.sh"
+    script.write_text(
+        _late().replace("T=/target", f"T={target}").replace("PAYLOAD=/cdrom/family-linux", f"PAYLOAD={payload}")
+    )
+
+    env = {**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"}
+    result = subprocess.run(["sh", str(script)], env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0  # the installer carries on; the failures are reported later
+    failures = (target / "var" / "lib" / "family-linux" / "install-failures").read_text()
+    assert "useradd" in failures and "<hash>" in failures and "$6$" not in failures
+    status = (target / "var" / "lib" / "family-linux" / "install-status").read_text().strip()
+    assert status.startswith("failed=") and int(status.split("=")[1]) == len(failures.splitlines()) > 0
+
+
+def test_only_appliance_builds_power_off_after_first_boot():
+    generator = DebianPreseedGenerator(_policy())
+    assert "poweroff-after-firstboot" not in generator.generate_late_script()
+    assert ": > $T/etc/family-linux/poweroff-after-firstboot" in generator.generate_late_script(poweroff_after_firstboot=True)
+
+
+def test_family_controls_dependency_pkexec_is_installed():
+    # Family Controls failed to load in UAT: Debian 13 ships pkexec as its own package.
+    assert "pkexec" in PACKAGES

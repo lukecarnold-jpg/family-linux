@@ -352,6 +352,8 @@ def main() -> None:
     parser.add_argument("--parent-pass", type=str, default=None, help=f"Parent password (required with --non-interactive; at least {MIN_PARENT_PASSWORD_LENGTH} characters with upper-case, lower-case, a number and a special character)")
     parser.add_argument("--child", action="append", help="Child account specification (format: username:fullname:tier:password, password required)")
     parser.add_argument("--export-preseed", type=str, help="Export the Debian Installer preseed file to this path, and the late-command script beside it, then exit")
+    parser.add_argument("--poweroff-after-firstboot", action="store_true", help="With --export-preseed: power off after the first-boot apply (appliance builds only)")
+    parser.add_argument("--unattended-disk", action="store_true", help="With --export-preseed: erase the disk without the installer's confirmation screen (automated builds only)")
     parser.add_argument("--export-policy", type=str, help="With --export-preseed: also write the policy file (no passwords) for first-boot provisioning")
     args = parser.parse_args()
 
@@ -395,6 +397,7 @@ def main() -> None:
                 locale=wizard.language,
                 keyboard_layout=wizard.keyboard,
                 target_disk=args.target_disk,
+                unattended_disk=args.unattended_disk,
             )
             out_path = Path(args.export_preseed)
             out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -402,7 +405,7 @@ def main() -> None:
                 f.write(content)
             late_path = out_path.parent / "late-command.sh"
             with open(late_path, "w", encoding="utf-8") as f:
-                f.write(gen.generate_late_script())
+                f.write(gen.generate_late_script(poweroff_after_firstboot=args.poweroff_after_firstboot))
             print(f"Exported Debian preseed to {out_path} and the late-command script to {late_path}")
             if args.export_policy:
                 from family_linux.config import PolicyConfigManager

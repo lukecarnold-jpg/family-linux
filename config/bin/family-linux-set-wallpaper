@@ -12,5 +12,13 @@ done
 [ -n "$IMAGE" ] || exit 0
 command -v plasma-apply-wallpaperimage >/dev/null 2>&1 || exit 0
 if plasma-apply-wallpaperimage "$IMAGE" >/dev/null 2>&1; then
+    # The lock screen keeps its own wallpaper setting (kscreenlockerrc); set it to the same image.
+    if command -v kwriteconfig6 >/dev/null 2>&1; then
+        kwriteconfig6 --file kscreenlockerrc --group Greeter --key WallpaperPlugin org.kde.image
+        kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image \
+            --group General --key Image "file://$IMAGE"
+        kwriteconfig6 --file kscreenlockerrc --group Greeter --group Wallpaper --group org.kde.image \
+            --group General --key PreviewImage "file://$IMAGE"
+    fi
     mkdir -p "$STATE" && : > "$MARKER"
 fi

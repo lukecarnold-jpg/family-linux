@@ -32,8 +32,10 @@ Current protections in the prototype:
 - The parent dashboard listens on `127.0.0.1` only, requires an access token, and rejects cross-origin and non-JSON requests.
 - Passwords are never written to the policy file or the API. The installer writes only password hashes; the parent password is used once to set the account password.
 - The parent password must be at least 14 characters with upper-case, lower-case, a number and a special character. This applies at install time and on every later change or reset through `passwd` (PAM `pam_pwquality`). Child passwords are not affected.
-- Every software change by a child account (install, remove, update, refresh) asks for the parent's password, on every attempt (polkit rule over PackageKit).
-- Child accounts use a nologin shell, have no sudo rights, and cannot open a shell from the desktop: the Alt+F2 run dialog and shell access are locked with Plasma kiosk restrictions for every account.
+- Every software change by a child account (install, remove, update, refresh) asks for the parent's password, on every attempt (polkit rule over PackageKit). Flatpak and Snap, which would install around that rule, are removed and pinned so apt never installs them.
+- Child accounts use a nologin shell, have no sudo rights, and cannot open a shell from the desktop: the Alt+F2 run dialog and shell access are locked with Plasma kiosk restrictions that apply to children only. The parent keeps a terminal.
+- A child cannot run commands at sign-in: the files and folders the session reads from the child's home (`~/.profile`, autostart, Plasma env scripts, systemd user units) are empty, root-owned and immutable.
+- The Debian image is used only after its checksum list is verified against Debian's CD signing keys, which are pinned in the repository.
 - DNS for each child goes through a per-child filter that refuses blocked names and any connection it did not allow.
 - Saving the policy happens before system changes, so a failed apply can be re-run to finish.
 - `family-ctl verify` reports real system state on Linux and says so when a check cannot run.
@@ -58,7 +60,7 @@ These are the configurations the project has been run on. Lower limits have not 
 
 - macOS on Apple silicon or Linux.
 - About 4 GB free for the Debian image and the built ISO, plus the VM disk for the appliance.
-- `xorriso`, `curl`, `rsync`, Python 3.9 or later with PyYAML, and for the appliance VirtualBox 7.2 or later (`VBoxManage`).
+- `xorriso`, `curl`, `rsync`, `gpgv` (`brew install gnupg` or `apt install gpgv`), Python 3.9 or later with PyYAML, and for the appliance VirtualBox 7.2 or later (`VBoxManage`).
 
 **Running the tests or the CLI only:** Python 3.9 or later (`requires-python` in `pyproject.toml`). The Family Controls window tests also need PyQt6 and are skipped without it.
 
@@ -78,7 +80,7 @@ Outside Linux, every system change is simulated, so these commands are safe on a
 
 ### Building the install ISO (arm64 or amd64)
 
-`scripts/build-debian-iso.sh` repacks the official Debian stable netinst image with a preseed (an unattended Debian install with KDE Plasma), a late-command script that sets up the accounts and the Family Linux payload, and the first-boot unit. It picks arm64 on Apple silicon and amd64 elsewhere; set `ARCH` to override. The image is downloaded to `build/` and checked against Debian's `SHA512SUMS`.
+`scripts/build-debian-iso.sh` repacks the official Debian stable netinst image with a preseed (an unattended Debian install with KDE Plasma), a late-command script that sets up the accounts and the Family Linux payload, and the first-boot unit. It picks arm64 on Apple silicon and amd64 elsewhere; set `ARCH` to override. The image is downloaded to `build/`. Debian's `SHA512SUMS` is checked against its signature with the Debian CD signing keys in `config/keys/`, and then the image is checked against `SHA512SUMS`.
 
 ```bash
 brew install xorriso                      # or: apt install xorriso
@@ -87,11 +89,15 @@ PARENT_PASS='Correct-Horse-42-Battery' CHILD_SPECS='kid:Kid:pre_teen:child-passw
 # -> dist/family-linux-debian-stable-arm64.iso (or -amd64.iso)
 ```
 
-Boot the ISO and press Enter on "Install" at the boot menu. The menu waits for that key on purpose. **The install erases the first disk the installer finds** (or the disk named in `TARGET_DISK`), so boot the ISO only on a computer you mean to set up.
+Boot the ISO and choose **Install** (or Graphical install) at the boot menu. The Debian installer opens with the Family Linux answers filled in: the accounts, the packages, the time zone and the disk. It still asks about anything those answers do not cover. **The install erases the first disk the installer finds** (or the disk named in `TARGET_DISK`), so boot the ISO only on a computer you mean to set up.
+
+The installer asks before it writes to the disk. On amd64 the BIOS menu works the same way as the UEFI menu.
+
+`MODE=automated` builds a variant whose Install entry starts after 5 seconds and runs with no questions at all, including the disk erase. The appliance build uses it.
 
 The installed system uses the time zone you choose in the installer; the build sets `TIMEZONE` (for example `TIMEZONE=Australia/Sydney`) and defaults to the host's zone. Bedtimes and curfews use local time. The wallpaper is the one image in `config/wallpaper/`, if there is one. The ISO contains only the parent and child password hashes.
 
-**VirtualBox appliance (.ova):** `scripts/build-virtualbox-vm.sh` builds the ISO, installs it into a new VirtualBox VM without prompts (it presses Enter at the boot menu), waits for the first-boot apply, and exports an appliance. It needs VirtualBox 7.2 or later; on an Apple silicon Mac it builds an arm64 VM.
+**VirtualBox appliance (.ova):** `scripts/build-virtualbox-vm.sh` builds the ISO, installs it into a new VirtualBox VM without prompts, waits for the first boot to apply the policy and power off, and exports an appliance. It needs VirtualBox 7.2 or later; on an Apple silicon Mac it builds an arm64 VM.
 
 ```bash
 PARENT_PASS='your-own-14+-char-Password!' CHILD_SPECS='kid:Kid:pre_teen:child-password' \
@@ -148,8 +154,10 @@ Policy checks run everywhere. Live checks run only on Linux and read the real sy
 - AppArmor child profile loaded in enforce mode (asked of the kernel)
 - unattended security upgrades enabled
 - parent password rules enforced by PAM on password changes
-- Alt+F2 run dialog and shell access locked for every account (Plasma kiosk restrictions)
-- software changes by children need the parent's password (polkit rule)
+- Alt+F2 run dialog and shell access locked for children (Plasma kiosk restrictions and the SDDM PAM rule)
+- each child's sign-in startup files locked (root-owned)
+- software changes by children need the parent's password (polkit rule), and Flatpak and Snap are removed and pinned
+- the installer finished every step (only on systems installed from the ISO)
 - child menus follow app approval: approved apps are shown, other system-wide apps are hidden, and the parent's home is private (0700)
 
 On any other host, the live checks are reported as `[SKIP]` and the result is `[INCOMPLETE]`, never `[SUCCESS]`. A missing tool is a `[FAIL]` with the reason.
@@ -181,22 +189,26 @@ Implemented (prototype level):
 Status of the Debian base (see [DEV_HIST.md](DEV_HIST.md) for the checks and the open items):
 
 - An unattended install of Debian 13.7.0 with KDE Plasma (arm64 ISO, VirtualBox 7.2.20 on Apple silicon) completed. The first boot applied the policy with no warnings and the machine reached its login prompt.
-- Not yet checked on the installed desktop: a child signing in on the SDDM login screen, the wallpaper at first login, the Alt+F2 and Ctrl+Alt+T locks, Discover's password prompt for children, Firefox ESR's policy, and the DNS filter on the running system.
+- Session 28: the web filter works with any browser, because it is network-level. Google Chrome (the most used browser) was installed and checked as a child: it opens confined, allowed and ECH sites load, blocked sites do not, and `chrome://policy` shows every managed setting. See `docs/web-filtering-guide.md`.
+- Session 27 (UAT): Family Controls failed to load (missing `pkexec`), and children's Firefox failed to start (the child AppArmor profile) and then could not load sites (lookups went around the web filter through nss-resolve). All three are fixed and were checked in a VM; see DEV_HIST.
+- Checked on the installed desktop (VirtualBox, arm64): the child is listed on the SDDM login screen and signs in to Plasma; the Family wallpaper appears at first login; Alt+F2 and Ctrl+Alt+T do nothing for the child while the parent's Ctrl+Alt+T opens Konsole; a child's package install is refused without authentication; `family-ctl verify` passes.
+- Not yet checked: Discover's password prompt in the child's desktop, Firefox ESR's `about:policies`, and whether the pinned System Settings launcher on the child's panel still opens. See DEV_HIST open items.
+- VirtualBox on Apple silicon needs the VMSVGA graphics adapter (the appliance build sets it). With `qemuramfb` the desktop stays black.
 - The amd64 ISO builds and passes its checks, but has not been installed.
+- The arm64 appliance `dist/family-linux-debian-stable-arm64.ova` is built from the same install. It has not been imported or booted yet.
 
 Not yet implemented, or not validated:
 
 - Installation to real hardware.
-- amd64 install: the ISO is built and checked in CI, but no install has been run. Its BIOS boot menu is not patched.
+- amd64 install: the ISO is built and checked in CI. A full install of the automated amd64 ISO runs in the `Debian install` workflow (QEMU), which has not run yet.
 - Anything that depends on the child's desktop session is only as tested as the VirtualBox run says.
 - Terminal shortcut (Ctrl+Alt+T) for child accounts is expected to be blocked by hiding Konsole; not yet confirmed.
-- Continuous integration does not run the Debian install. Its Linux jobs run on an Ubuntu runner.
+- CI: the `debian` job runs the tests and checks the package list in a Debian 13 container. The other Linux jobs run on Ubuntu runners.
 
 Repository status (checked with `gh` on 2026-11-01):
 
-- Default branch: `main`, which now includes PR #6 (`arm64-iso`, merged). CI runs on pushes to `main` and on pull requests into `main`.
-- Working branch: `debian-kde`, based on `main`. It has no CI until a pull request into `main` is open.
-- Open pull requests: none at the time of writing.
+- Default branch: `main`. It includes PR #6 (`arm64-iso`) and PR #7 (`debian-kde`, merged as `d0152db`, the Debian rebuild from Session 25). CI passed on that merge. CI runs on pushes to `main` and on pull requests into `main`.
+- Working branch: `debian-kde`, in pull request [#8](https://github.com/lukecarnold-jpg/family-linux/pull/8) into `main` (interactive ISO, appliance fixes, Session 26 review fixes, Session 27 UAT fixes, Session 28 browser and CI fixes). Its first CI run passed the full QEMU install of the amd64 ISO, the ISO check, the unit tests and the integration job. The Debian 13 container and live-apply jobs failed; the causes are fixed in the Session 28 commit (DEV_HIST Session 28). PR #8 is merged once its CI passes.
 
 Design documents:
 

@@ -36,6 +36,8 @@ Do not leave these files stale at the end of a task. If a change needs no update
 - `dist/` and `build/` are git-ignored. The built ISOs and appliances contain the passwords used to build them. Do not share them, and do not commit them.
 - Build passwords come from the environment (`PARENT_PASS`, `CHILD_SPECS`). Do not write them into files in the repository.
 - Each ISO build downloads the Debian netinst image and checks it against `SHA512SUMS` (the file name is read from that list, because it changes with each point release). If Debian moves its images, update `scripts/build-debian-iso.sh`, or set `DEBIAN_BASE_URL`.
+- `SHA512SUMS` is verified with `gpgv` against `config/keys/debian-cd-signing.gpg`. If Debian changes its CD signing key, check the new fingerprint on https://www.debian.org/CD/verify before adding it to that keyring.
+- Check any package name added to the preseed against Debian's apt index (`apt-cache show`, or the `debian` CI job), not by web page status: a missing name stops the installer.
 
 ## Style
 
