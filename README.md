@@ -87,7 +87,9 @@ PARENT_PASS='Correct-Horse-42-Battery' CHILD_SPECS='kid:Kid:pre_teen:child-passw
 # -> dist/family-linux-debian-stable-arm64.iso (or -amd64.iso)
 ```
 
-Boot the ISO and press Enter on "Install" at the boot menu. The menu waits for that key on purpose. **The install erases the first disk the installer finds** (or the disk named in `TARGET_DISK`), so boot the ISO only on a computer you mean to set up.
+Boot the ISO and choose **Install** (or Graphical install) at the boot menu. The Debian installer opens with the Family Linux answers filled in: the accounts, the packages, the time zone and the disk. It still asks about anything those answers do not cover. **The install erases the first disk the installer finds** (or the disk named in `TARGET_DISK`), so boot the ISO only on a computer you mean to set up.
+
+`MODE=automated` builds a variant whose Install entry runs with no questions at all. The appliance build uses it.
 
 The installed system uses the time zone you choose in the installer; the build sets `TIMEZONE` (for example `TIMEZONE=Australia/Sydney`) and defaults to the host's zone. Bedtimes and curfews use local time. The wallpaper is the one image in `config/wallpaper/`, if there is one. The ISO contains only the parent and child password hashes.
 

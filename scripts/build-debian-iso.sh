@@ -9,6 +9,12 @@ set -euo pipefail
 #   - a boot menu entry that starts the preseed (the menu still waits for Enter, so the disk is
 #     never wiped by accident)
 #
+# Modes (MODE):
+#   interactive (default): the menu's Install and Graphical install entries open the Debian installer.
+#       The preseed supplies the answers it covers (accounts, packages, disk, time zone), and the
+#       installer shows the rest. The disk is still erased.
+#   automated: Install starts unattended, with no questions. Used by build-virtualbox-vm.sh.
+#
 # The installer erases the disk it installs to. Boot the ISO only on a computer you mean to set up.
 #
 # Architecture: arm64 on Apple silicon and other ARM hosts (for example VirtualBox 7.2 on an M-series
@@ -17,6 +23,7 @@ set -euo pipefail
 # Optional: CHILD_SPECS='kid:Kid:pre_teen:child-password' (one child per line).
 # Optional: TIMEZONE='Australia/Sydney' (default: UTC). Curfews use local time.
 # Optional: TARGET_DISK=/dev/nvme0n1 (default: the first disk the installer finds).
+# Optional: MODE=interactive (default) or MODE=automated.
 # Optional: DEBIAN_BASE_URL (default https://cdimage.debian.org/debian-cd/current/<arch>/iso-cd).
 # Requires: xorriso, curl, rsync, PARENT_PASS, and a Python with PyYAML (PYTHON=... to choose one).
 
@@ -45,7 +52,12 @@ done
 DEBIAN_BASE_URL="${DEBIAN_BASE_URL:-https://cdimage.debian.org/debian-cd/current/${ARCH}/iso-cd}"
 PAYLOAD="${BUILD_DIR}/payload"
 EXPORT="${BUILD_DIR}/export"
-OUT_ISO="${OUTPUT_DIR}/family-linux-debian-stable-${ARCH}.iso"
+MODE="${MODE:-interactive}"
+case "$MODE" in
+    interactive) OUT_ISO="${OUTPUT_DIR}/family-linux-debian-stable-${ARCH}.iso" ;;
+    automated)   OUT_ISO="${OUTPUT_DIR}/family-linux-debian-stable-${ARCH}-automated.iso" ;;
+    *) echo "MODE must be interactive or automated (got '$MODE')" >&2; exit 2 ;;
+esac
 
 echo "=== Family Linux ISO builder (${ARCH}, Debian stable netinst) ==="
 mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
@@ -132,10 +144,11 @@ fi
 #    Expert, rescue and graphical-automated entries are left as Debian ships them.
 xorriso -osirrox on -indev "$ISO_SRC" -extract /boot/grub/grub.cfg "${BUILD_DIR}/grub.cfg" >/dev/null 2>&1
 chmod u+w "${BUILD_DIR}/grub.cfg"  # ISO files are read-only
-"$PYTHON" - "${BUILD_DIR}/grub.cfg" "$ARCH" <<'PY'
+"$PYTHON" - "${BUILD_DIR}/grub.cfg" "$ARCH" "$MODE" <<'PY'
 import sys
 path = sys.argv[1]
 ARCH = sys.argv[2]
+MODE = sys.argv[3]
 lines = open(path, encoding="utf-8").read().splitlines()
 changed = 0
 for index, line in enumerate(lines):
@@ -147,17 +160,18 @@ for index, line in enumerate(lines):
     # Before "---": for the installer only. The preseed is read from the ISO root.
     head, _, tail = line.partition("---")
     extra = []
-    if "auto=true" not in head:
+    if MODE == "automated" and "auto=true" not in head:
         extra.append("auto=true priority=critical")
     if "file=" not in head:
         extra.append("file=/cdrom/preseed.cfg")
     if extra:
         head = head.rstrip() + " " + " ".join(extra) + " "
-    # After "---": also copied to the installed system. The serial console is last, so it is
-    # /dev/console, and headless builds (VirtualBox) can see the first-boot result.
-    console = " console=ttyAMA0" if ARCH == "arm64" else " console=ttyS0"
-    if console.strip() not in tail:
-        tail = tail.rstrip() + console
+    if MODE == "automated":
+        # After "---": also copied to the installed system. The serial console is last, so it is
+        # /dev/console, and headless builds (VirtualBox) can see the first-boot result.
+        console = " console=ttyAMA0" if ARCH == "arm64" else " console=ttyS0"
+        if console.strip() not in tail:
+            tail = tail.rstrip() + console
     lines[index] = head + "---" + tail
     changed += 1
 if changed == 0:
@@ -187,4 +201,8 @@ rm -rf "$CHECK"
 
 echo "Built: ${OUT_ISO}"
 echo "Size: $(du -h "$OUT_ISO" | awk '{print $1}')"
-echo "Boot the ISO for ${ARCH}. At the menu, press Enter on 'Install'; the install runs unattended and the first boot applies the Family Linux policy."
+if [ "$MODE" = automated ]; then
+    echo "Boot the ISO for ${ARCH}. At the menu, press Enter on 'Install'; the install runs unattended and the first boot applies the Family Linux policy."
+else
+    echo "Boot the ISO for ${ARCH}. At the menu, choose 'Install' (or 'Graphical install'). The Debian installer opens with the Family Linux answers filled in; the first boot applies the Family Linux policy."
+fi

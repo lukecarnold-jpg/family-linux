@@ -393,10 +393,11 @@ jobs:
           # Both BIOS and UEFI boot records must survive the repack
           xorriso -indev "$ISO" -report_el_torito plain | grep -q "BIOS"
           xorriso -indev "$ISO" -report_el_torito plain | grep -q "UEFI"
-          # Boot menu (GRUB, UEFI): the preseed is read from the ISO root, serial console for the log
+          # Boot menu (GRUB, UEFI): the Install entry reads the preseed from the ISO root, unattended
+          # arguments are not added (interactive mode is the default)
           xorriso -indev "$ISO" -osirrox on -extract /boot/grub/grub.cfg grub.cfg
           grep -q "file=/cdrom/preseed.cfg" grub.cfg
-          grep -q "console=ttyS0" grub.cfg
+          ! grep -q "^    linux.*priority=critical file=" grub.cfg
           # Preseed: Debian with KDE Plasma; the late command runs from the payload
           xorriso -indev "$ISO" -osirrox on -extract /preseed.cfg preseed.cfg
           grep -q "tasksel tasksel/first multiselect kde-desktop" preseed.cfg

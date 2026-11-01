@@ -617,6 +617,8 @@ Request from the user: act on the review's list, starting with item 1.
 
 **Appliance.** `scripts/build-virtualbox-vm.sh` built `dist/family-linux-debian-stable-arm64.ova` (4.5 GB) from the same install: parent `parent`, child `child` (tier `pre_teen`). The first boot completed with 24 actions. **Defect 4:** the earlier appliance attempt waited 5 minutes for an ACPI power button that the arm64 guest ignores, so the script exited before the export. **Fix:** after 2 minutes the script powers the VM off and then exports. The first boot had already written its marker, so nothing was left unapplied. The exported appliance has not been imported or booted yet.
 
+**Interactive ISO.** The ISO's Install entry used to run unattended, so the installer never showed the user its screens. `MODE=interactive` (the new default) opens the Debian installer with the preseed answers filled in. `MODE=automated` keeps the old unattended entry, and the appliance build uses it. Both arm64 ISOs were built and checked: the interactive one boots to the Debian installer's language screen in VirtualBox (screenshot checked, temporary VM deleted). The amd64 interactive ISO was built and its GRUB entries checked. Its BIOS (isolinux) menu is not patched, so BIOS boot gets the stock installer without the Family Linux answers.
+
 **Not verified yet.** Each item below is also in the open items.
 
 - Child sign-in at SDDM with a nologin shell. The child is not yet confirmed to appear on the login screen or to start a Plasma session.
@@ -650,3 +652,4 @@ Request from the user: act on the review's list, starting with item 1.
 18. Session 25: amd64 has not been installed, and its BIOS (isolinux) boot menu is not patched.
 19. Session 25: item 7 above is obsolete: Debian uses firefox-esr, not a snap.
 20. Session 25: import `dist/family-linux-debian-stable-arm64.ova` and boot it. The appliance was exported from a VM the guest never shut down, so check that the filesystem is clean.
+21. Session 25: the amd64 BIOS (isolinux) menu is not patched, so BIOS boot does not read the preseed. The UEFI boot does.

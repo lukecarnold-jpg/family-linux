@@ -37,7 +37,7 @@ MEMORY_MB="${MEMORY_MB:-4096}"
 CPUS="${CPUS:-2}"
 DISK_MB="${DISK_MB:-40960}"
 TIMEOUT_MIN="${TIMEOUT_MIN:-90}"
-ISO="${OUTPUT_DIR}/family-linux-debian-stable-${ARCH}.iso"
+ISO="${OUTPUT_DIR}/family-linux-debian-stable-${ARCH}-automated.iso"
 OVA="${OUTPUT_DIR}/family-linux-debian-stable-${ARCH}.ova"
 SERIAL_LOG="${BUILD_DIR}/vbox-${ARCH}-serial.log"
 
@@ -54,7 +54,7 @@ mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
 if [ "${SKIP_ISO:-0}" = 1 ] && [ -f "$ISO" ]; then
     echo "Reusing ${ISO}"
 else
-    ARCH="$ARCH" "${SCRIPT_DIR}/build-debian-iso.sh"
+    ARCH="$ARCH" MODE=automated "${SCRIPT_DIR}/build-debian-iso.sh"
 fi
 
 # 2. VM: ${ARCH}, EFI, VirtIO disk and network, serial output to a log so the build can follow it

@@ -57,8 +57,8 @@ Generated folders such as `__pycache__/`, `build/` and `dist/` are ignored by `.
 | File | Purpose |
 |------|---------|
 | `bootstrap-prototype.sh` | Launcher for every command: `install`, `dashboard`, `ctl`, `policyd`, `verify`, `test`, `preseed`. Sets `PYTHONPATH` to `src/`. |
-| `build-debian-iso.sh` | Builds the install ISO: repacks the Debian stable netinst image (arm64 or amd64) with the preseed, the late-command script, the Family Linux payload, the wallpaper (if any) and the boot-menu entries that start the preseed. Checks the image against `SHA512SUMS` (the file name is read from that list). `DEBIAN_BASE_URL` overrides the location |
-| `build-virtualbox-vm.sh` | Builds the ISO, installs it into a VirtualBox VM headless (presses Enter at the boot menu), waits for the first-boot apply, and exports an `.ova` |
+| `build-debian-iso.sh` | Builds the install ISO: repacks the Debian stable netinst image (arm64 or amd64) with the preseed, the late-command script, the Family Linux payload, the wallpaper (if any) and the boot-menu entries that read the preseed. `MODE=interactive` (default) opens the Debian installer with the preseed answers; `MODE=automated` runs the Install entry with no questions. Checks the image against `SHA512SUMS` (the file name is read from that list). `DEBIAN_BASE_URL` overrides the location |
+| `build-virtualbox-vm.sh` | Builds the automated ISO, installs it into a VirtualBox VM headless (presses Enter at the boot menu), waits for the first-boot apply, and exports an `.ova` |
 
 ## Source package (`src/family_linux/`)
 
