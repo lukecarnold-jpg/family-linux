@@ -183,6 +183,7 @@ Status of the Debian base (see [DEV_HIST.md](DEV_HIST.md) for the checks and the
 - An unattended install of Debian 13.7.0 with KDE Plasma (arm64 ISO, VirtualBox 7.2.20 on Apple silicon) completed. The first boot applied the policy with no warnings and the machine reached its login prompt.
 - Not yet checked on the installed desktop: a child signing in on the SDDM login screen, the wallpaper at first login, the Alt+F2 and Ctrl+Alt+T locks, Discover's password prompt for children, Firefox ESR's policy, and the DNS filter on the running system.
 - The amd64 ISO builds and passes its checks, but has not been installed.
+- The arm64 appliance `dist/family-linux-debian-stable-arm64.ova` is built from the same install. It has not been imported or booted yet.
 
 Not yet implemented, or not validated:
 

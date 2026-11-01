@@ -100,10 +100,20 @@ grep -a "First-boot provisioning complete" "$SERIAL_LOG" | tail -n 1
 # 4. Shut down cleanly, remove the ISO and the host-specific serial log, export
 echo "Shutting down..."
 VBoxManage controlvm "$VM_NAME" acpipowerbutton
-for _ in $(seq 1 60); do
+for _ in $(seq 1 24); do
     VBoxManage showvminfo "$VM_NAME" --machinereadable | grep -q '^VMState="poweroff"' && break
     sleep 5
 done
+# On arm64 the guest may ignore the ACPI button (seen with the Debian image). The first boot has
+# finished and written its marker, so a power-off after two idle minutes leaves nothing unapplied.
+if ! VBoxManage showvminfo "$VM_NAME" --machinereadable | grep -q '^VMState="poweroff"'; then
+    echo "The guest ignored the power button; powering off the VM." >&2
+    VBoxManage controlvm "$VM_NAME" poweroff >/dev/null 2>&1 || true
+    for _ in $(seq 1 12); do
+        VBoxManage showvminfo "$VM_NAME" --machinereadable | grep -q '^VMState="poweroff"' && break
+        sleep 5
+    done
+fi
 if ! VBoxManage showvminfo "$VM_NAME" --machinereadable | grep -q '^VMState="poweroff"'; then
     echo "The VM did not shut down within 5 minutes; not exporting a disk that may be in use." >&2
     exit 1

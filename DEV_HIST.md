@@ -615,6 +615,8 @@ Request from the user: act on the review's list, starting with item 1.
 
 **CI.** Pull request #7 (`debian-kde` into `main`) was opened to run the workflow, which triggers only on pull requests into `main`. All 13 jobs passed: unit tests on Python 3.9 to 3.13 on Ubuntu and macOS, the privileged Linux integration job, the live-apply job on the Ubuntu runner, and the amd64 ISO build and check. These jobs do not install Debian. The arm64 install was checked in VirtualBox only.
 
+**Appliance.** `scripts/build-virtualbox-vm.sh` built `dist/family-linux-debian-stable-arm64.ova` (4.5 GB) from the same install: parent `parent`, child `child` (tier `pre_teen`). The first boot completed with 24 actions. **Defect 4:** the earlier appliance attempt waited 5 minutes for an ACPI power button that the arm64 guest ignores, so the script exited before the export. **Fix:** after 2 minutes the script powers the VM off and then exports. The first boot had already written its marker, so nothing was left unapplied. The exported appliance has not been imported or booted yet.
+
 **Not verified yet.** Each item below is also in the open items.
 
 - Child sign-in at SDDM with a nologin shell. The child is not yet confirmed to appear on the login screen or to start a Plasma session.
@@ -647,3 +649,4 @@ Request from the user: act on the review's list, starting with item 1.
 17. Session 25: the Linux CI jobs still run on Ubuntu runners. Add a Debian job, or run the install check in a VM job.
 18. Session 25: amd64 has not been installed, and its BIOS (isolinux) boot menu is not patched.
 19. Session 25: item 7 above is obsolete: Debian uses firefox-esr, not a snap.
+20. Session 25: import `dist/family-linux-debian-stable-arm64.ova` and boot it. The appliance was exported from a VM the guest never shut down, so check that the filesystem is clean.
