@@ -51,3 +51,31 @@ def test_successful_apply_reports_actions_and_audits(tmp_path):
     assert results["actions"][0].startswith("Policy saved to")
     assert any("AppArmor" in a for a in results["actions"])
     assert any(r.event_type == "SYSTEM_PROVISIONED" for r in audit.get_records())
+
+
+def test_a_website_rule_reapplies_only_the_web_filter(tmp_path):
+    from family_linux.config import PolicyConfigManager
+    from family_linux.models import ChildAccount, FamilyPolicy, ParentAccount
+    from family_linux.provisioner.system import WEB_LAYERS, SystemProvisioner
+    from family_linux.security.adapter import SystemAdapter
+
+    adapter = SystemAdapter(dry_run=True)
+    policy = FamilyPolicy(parent=ParentAccount("parent", "P"), children=[ChildAccount.create("kid", "Kid", "teen")])
+    results = SystemProvisioner(adapter=adapter, config_manager=PolicyConfigManager(tmp_path / "p.yaml")).apply_policy(
+        policy, reason="test", layers=WEB_LAYERS
+    )
+    commands = [" ".join(c) for c in adapter.executed_commands]
+    assert any("Per-child web filter" in a for a in results["actions"])
+    assert not any(c.startswith(("ufw", "useradd", "usermod", "apparmor_parser", "timedatectl")) for c in commands)
+
+
+def test_unknown_layer_names_are_refused(tmp_path):
+    import pytest
+    from family_linux.config import PolicyConfigManager
+    from family_linux.models import FamilyPolicy, ParentAccount
+    from family_linux.provisioner.system import SystemProvisioner
+    from family_linux.security.adapter import SystemAdapter
+
+    provisioner = SystemProvisioner(adapter=SystemAdapter(dry_run=True), config_manager=PolicyConfigManager(tmp_path / "p.yaml"))
+    with pytest.raises(ValueError):
+        provisioner.apply_policy(FamilyPolicy(parent=ParentAccount("parent", "P")), layers=("firewal",))

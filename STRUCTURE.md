@@ -14,7 +14,8 @@ family-linux/
 ├── LICENSE                MIT
 ├── .gitignore             Ignores bytecode, pytest cache, build output, ISO images
 ├── .github/workflows/
-│   └── ci.yml             Test matrix (Python 3.9–3.13, Ubuntu and macOS runners) and privileged Linux jobs
+│   ├── ci.yml             Test matrix (Python 3.9–3.13, Ubuntu and macOS), privileged Linux jobs, Debian 13 container job, amd64 ISO check
+│   └── debian-install.yml Full install of the automated amd64 ISO under QEMU (weekly, on demand, and on installer changes)
 ├── docs/                  Design documents and the parent guide to web filtering
 ├── config/                Policy templates, browser/systemd configuration, menu entries, polkit, wallpaper
 ├── scripts/               Bootstrap launcher, Debian ISO build, VirtualBox appliance build
@@ -51,14 +52,15 @@ Generated folders such as `__pycache__/`, `build/` and `dist/` are ignored by `.
 | `applications/org.familylinux.Parent.desktop` | Menu entry for Family Controls | Installed by the late command; hidden for children |
 | `polkit/org.familylinux.manage.policy` | polkit action for `pkexec family-ctl` (administrators, password remembered briefly) | Installed by the late command |
 | `wallpaper/` | Optional desktop wallpaper: one PNG or JPEG, with a README. Built into the ISO when present | `scripts/build-debian-iso.sh` |
+| `keys/debian-cd-signing.gpg` | Debian CD signing keys (fingerprints `DF9B9C49…6294BE9B` and `10460DAD…64E6EA7D`, as listed on debian.org/CD/verify) | `scripts/build-debian-iso.sh` (`gpgv` on `SHA512SUMS.sign`) |
 
 ## Scripts (`scripts/`)
 
 | File | Purpose |
 |------|---------|
 | `bootstrap-prototype.sh` | Launcher for every command: `install`, `dashboard`, `ctl`, `policyd`, `verify`, `test`, `preseed`. Sets `PYTHONPATH` to `src/`. |
-| `build-debian-iso.sh` | Builds the install ISO: repacks the Debian stable netinst image (arm64 or amd64) with the preseed, the late-command script, the Family Linux payload, the wallpaper (if any) and the boot-menu entries that read the preseed. `MODE=interactive` (default) opens the Debian installer with the preseed answers; `MODE=automated` runs the Install entry with no questions. Checks the image against `SHA512SUMS` (the file name is read from that list). `DEBIAN_BASE_URL` overrides the location |
-| `build-virtualbox-vm.sh` | Builds the automated ISO, installs it into a VirtualBox VM headless (presses Enter at the boot menu), waits for the first-boot apply, and exports an `.ova` |
+| `build-debian-iso.sh` | Builds the install ISO: repacks the Debian stable netinst image (arm64 or amd64) with the preseed, the late-command script, the Family Linux payload, the wallpaper (if any) and the boot-menu entries that read the preseed. `MODE=interactive` (default) opens the Debian installer with the preseed answers and asks before erasing the disk; `MODE=automated` starts Install after 5 seconds with no questions; `APPLIANCE=1` makes the first boot power off when done. Patches both the UEFI (GRUB) and, on amd64, the BIOS (isolinux) menus through `provisioner/iso.py`. Verifies `SHA512SUMS` against Debian's signing keys, then the image against it (the file name is read from that list). `DEBIAN_BASE_URL` overrides the location |
+| `build-virtualbox-vm.sh` | Builds the automated appliance ISO, installs it into a VirtualBox VM headless (VMSVGA graphics; Debian has no DRM driver for qemuramfb), waits for the first boot to apply the policy and power off (hard power-off after 4 minutes as a fallback), and exports an `.ova` |
 
 ## Source package (`src/family_linux/`)
 
@@ -82,8 +84,9 @@ Generated folders such as `__pycache__/`, `build/` and `dist/` are ignored by `.
 | `audit/logger.py` | Append-only JSON-lines audit log with read and filter | `AuditLogger`, `AuditRecord` |
 | `installer/wizard.py` | Installer state machine and the 12 steps. Non-interactive mode builds the policy from flags and exports the preseed. | `InstallerWizard` |
 | `provisioner/preseed.py` | Generates the Debian Installer preseed (locale, time zone, the parent account as the only administrator, the first disk, Debian repositories, `kde-desktop` task, package list, UEFI boot) and the late-command script (family groups, sudoers, child accounts with nologin shells, firewall, payload, wallpaper, NetworkManager with systemd-resolved, unattended upgrades). Every value is shell-quoted | `DebianPreseedGenerator`, `PACKAGES`, `ISO_PAYLOAD_DIR` |
-| `provisioner/system.py` | Saves the policy first, then applies the time zone, users, firewall, DNS, the web gateway, browsers, AppArmor, security updates, the PackageKit install gate, Firefox ESR, the Plasma kiosk lockdown, and desktop filters. Failures raise `ProvisioningError` naming the last completed step. | `SystemProvisioner.apply_policy`, `ProvisioningError` |
-| `provisioner/firstboot.py` | First-boot apply with a done marker | `run`, `MARKER_PATH` |
+| `provisioner/iso.py` | Boot-menu changes for the ISO: the preseed argument on each install entry of the GRUB (UEFI) and isolinux (amd64 BIOS) menus; in automated mode also the unattended arguments, the serial console and a 5-second timeout. Expert and rescue entries are left alone | `patch_grub`, `patch_isolinux_entries`, `patch_isolinux_timeout`, `main` |
+| `provisioner/system.py` | Saves the policy first, then applies the time zone, users, firewall, DNS, the web gateway, browsers, AppArmor, security updates, the PackageKit install gate, Firefox ESR, the Plasma kiosk lockdown, and desktop filters. The apply is split into named layers (`ALL_LAYERS`); a change from `family-ctl` or the dashboard re-applies only its layers (`CHILD_ADDED_LAYERS`, `CHILD_SIGN_IN_LAYERS`, `APP_LAYERS`, `WEB_LAYERS`). Failures raise `ProvisioningError` naming the last completed step. | `SystemProvisioner.apply_policy`, `ProvisioningError`, `ALL_LAYERS` |
+| `provisioner/firstboot.py` | First-boot apply with a done marker. Reports installer steps that failed, and powers off once in appliance builds | `run`, `MARKER_PATH`, `installer_failures`, `POWEROFF_FLAG` |
 | `provisioner/sha512crypt.py` | SHA-512 crypt (`$6$`) for the password hashes in the preseed and late command (no `crypt` module on Python 3.13+) | `sha512_crypt` |
 | `cli/family_ctl.py` | `status`, `state` (JSON for the app), `user`, `app`, `time`, `web`, `audit`, `backup`, `verify` subcommands. `verify` reads real state for live checks on Linux, including the Firefox, Chromium and Brave policy files, the Plasma kiosk lockdown and the software install gate. | `FamilyCtl`, `format_table` |
 | `kde_app/app.py` | Family Controls, the parent's KDE app (Qt 6 through PyQt6): children, screen time, websites, apps, website requests, add child | `FamilyControlsWindow`, `AddChildDialog`, `main` |
@@ -107,12 +110,13 @@ Each manager takes a `SystemAdapter`, so the same code path runs in simulation.
 | `dns_gateway.py` | Per-child DNS gateway. Answers each child's lookups from that child's rules, refuses blocked names, records blocked lookups for the parent, and adds allowed addresses to the child's nftables allow set | `ChildResolver`, `DomainRules`, `RequestLog`, `AddressAllowList`, `run` |
 | `tls_proxy.py` | Per-child HTTPS (SNI) and HTTP (Host) name check on the redirected ports 443 and 80. Relays a connection only when its address and name came from the child's allowed lookups; falls back to the name's other allowed addresses when one cannot be reached | `ProxyContext`, `decide`, `LearnedNameAddresses`, `connection_candidates` |
 | `web_gateway.py` | Renders the gateway's config, nftables rules and `family-dnsd.service` (rules loaded before the gateway starts, so the gateway fails closed) | `render_config`, `render_nft`, `render_service` |
-| `desktop_lockdown.py` | Plasma kiosk restrictions in `/etc/xdg/kdeglobals` (managed block, `[KDE Action Restrictions][$i]`): no shell access, no Alt+F2 run dialog, no `--config` override. Applies to every account | `DesktopLockdown`, `with_lockdown`, `lockdown_in_place`, `LOCKED_RESTRICTIONS` |
+| `desktop_lockdown.py` | Plasma kiosk restrictions for children only: `[KDE Action Restrictions][$i]` in `/etc/xdg/family-linux-children/kdeglobals` (no shell access, no Alt+F2 run dialog, no `--config` override), put first in `XDG_CONFIG_DIRS` for `family-children` by a managed PAM block in `/etc/pam.d/sddm`. Removes the old system-wide block, so the parent keeps a terminal | `DesktopLockdown`, `with_pam_block`, `lockdown_in_place`, `LOCKED_RESTRICTIONS` |
+| `child_startup.py` | Replaces each child's sign-in startup files and folders (`~/.profile`, `~/.xprofile`, `~/.xsessionrc`, `~/.config/autostart`, `autostart-scripts`, `environment.d`, `plasma-workspace/env` and `shutdown`, `systemd/user`) with empty root-owned immutable ones, through descriptors opened with `O_NOFOLLOW`. Existing folders are set aside, never deleted | `ChildStartupLock`, `lock_startup_paths`, `startup_locked`, `LOCKED_PATHS` |
 | `apparmor.py` | Writes and loads the `family-linux-child` profile | `AppArmorManager`, `CHILD_SESSION_PROFILE` |
-| `child_dirs.py` | Root-safe access to a child's override folder: each component opened with `O_NOFOLLOW` from the one above, writes by temporary name and rename, `fchown` for the child's folders, `chattr` on `/proc/self/fd/N`. Used by root real runs; dry runs use the path-based code in `app_guard.py` | `open_overrides_dir`, `write_file`, `remove_file`, `set_immutable` |
+| `child_dirs.py` | Root-safe access to a child's override folder: each component opened with `O_NOFOLLOW` from the one above, writes by temporary name and rename, `fchown` for the child's folders, the immutable flag set with the `FS_IOC_SETFLAGS` ioctl on the descriptor. Used by root real runs; dry runs use the path-based code in `app_guard.py` | `open_overrides_dir`, `write_file`, `remove_file`, `set_immutable` |
 | `app_guard.py` | Scans the system `.desktop` folders (`/usr/share/applications`, `/usr/local/share/applications`); writes marked `NoDisplay=true` overrides for unapproved apps in the child's home, and removes overrides that are no longer needed | `AppGuard`, `is_managed_override`, `MANAGED_MARKER`, `SYSTEM_APP_DIRS` |
 | `desktop_refresh.py` | Re-applies child app approvals; run by `family-appguard.path` (systemd) when apt or PackageKit changes desktop entries | `refresh`, `render_path_unit`, `render_service_unit`, `WATCHED_DIRS` |
-| `package_gate.py` | Polkit rule that makes every PackageKit action (install, remove, update, refresh) by a child account need the parent's password (`AUTH_ADMIN`); installs PackageKit if missing | `PackageInstallGate`, `render_polkit_rule`, `rule_in_place` |
+| `package_gate.py` | Polkit rule that makes every PackageKit action (install, remove, update, refresh) by a child account need the parent's password (`AUTH_ADMIN`); installs PackageKit if missing; removes Flatpak, Snap and Discover's Flatpak and Snap backends, and pins them at priority -1 | `PackageInstallGate`, `render_polkit_rule`, `rule_in_place`, `render_apt_pin`, `BLOCKED_PACKAGES` |
 | `password_policy.py` | Managed PAM block in `/etc/pam.d/passwd`: `pam_pwquality` for the parent (14+ characters, all four classes) on every `passwd` change, with children exempted by name | `ParentPasswordRules`, `render_pam_block`, `insert_block`, `block_in_place` |
 
 ### Runtime paths
@@ -134,7 +138,11 @@ Paths are chosen at runtime. The first set is used when running as root or when 
 | Brave policy | `/etc/brave/policies/managed/family-policy.json` (for Brave from Brave's own repository) | (none) |
 | Web gateway config and rules | `/etc/family-linux/dns-gateway.json`, `/etc/family-linux/nftables-children.nft`, `/etc/systemd/system/family-dnsd.service` | (none) |
 | Blocked web requests | `/var/lib/family-linux/web-requests.json` | (none) |
-| Plasma kiosk restrictions | `/etc/xdg/kdeglobals` (managed block) | (none) |
+| Plasma kiosk restrictions (children) | `/etc/xdg/family-linux-children/kdeglobals`, `/etc/security/family-linux-children.conf`, `/etc/pam.d/sddm` (managed block) | (none) |
+| Locked sign-in startup paths (children) | `/home/<child>/.profile` and the others in `child_startup.LOCKED_PATHS` | (none) |
+| Installer step results | `/var/lib/family-linux/install-failures`, `/var/lib/family-linux/install-status` | (none) |
+| Appliance power-off flag (removed by the first boot) | `/etc/family-linux/poweroff-after-firstboot` | (none) |
+| Flatpak and Snap pin | `/etc/apt/preferences.d/family-linux-no-flatpak-snap` | (none) |
 | Software install gate (polkit) | `/etc/polkit-1/rules.d/50-family-linux-packages.rules` | (none) |
 | Wallpaper image | `/usr/share/backgrounds/family-linux/wallpaper.<extension>` | (none) |
 | Wallpaper step (run at login) | `/usr/libexec/family-linux/family-linux-set-wallpaper`, `/etc/xdg/autostart/family-linux-wallpaper.desktop` | (none) |
@@ -159,7 +167,9 @@ Run with `./scripts/bootstrap-prototype.sh test` or `python3 -m pytest tests`. R
 | `test_config.py` | Save, backup, restore, and validation in `PolicyConfigManager` |
 | `test_audit.py` | Audit log writes, reads, and filters |
 | `test_installer.py` | Non-interactive wizard validation, dry-run apply, the preseed export and its late-command script |
-| `test_preseed.py` | The preseed (KDE Plasma task, Debian repositories, no root login, hashes only, packages, disk, UEFI) and the late command (groups, sudoers, children, payload, networking, wallpaper). Runs `sh -n` on the script, including a child name with quotes |
+| `test_iso.py` | Boot-menu changes against Debian 13.7's own GRUB and isolinux menus (`tests/fixtures/`): interactive vs automated, expert and rescue entries untouched, no duplicate arguments, the BIOS timeout |
+| `test_child_startup.py` | Sign-in startup files locked on real files: existing `.profile` emptied, autostart set aside, symlinked `.profile` and `.config` refused, second apply, dry run |
+| `test_preseed.py` | The preseed (KDE Plasma task, Debian repositories, no root login, hashes only, packages, disk, UEFI) and the late command (groups, sudoers, children, payload, networking, wallpaper). Runs `sh -n` on the script, including a child name with quotes. The disk erase is confirmed by a person unless the build is unattended. Runs the real script against a temporary target to check that failed steps are listed without password hashes |
 | `test_cli.py` | `family-ctl` commands in simulation, isolated from real paths; `verify` is `[INCOMPLETE]` off Linux |
 | `test_screentime.py` | Usage tracking, quota and curfew evaluation, one enforcement cycle |
 | `test_security.py` | Security managers in simulation; Plasma kiosk lockdown; dry-run reaches policy and audit writers |

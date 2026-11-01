@@ -373,7 +373,7 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y xorriso rsync
+          sudo apt-get install -y xorriso rsync gpgv
           python -m pip install --upgrade pip
           pip install pyyaml
 
@@ -414,3 +414,39 @@ jobs:
         with:
           name: family-linux-amd64-iso-sha256
           path: iso.sha256
+
+  debian:
+    name: Debian 13 container (package names, tests, integration)
+    runs-on: ubuntu-latest
+    # The other Linux jobs run on Ubuntu runners. This one runs on Debian's own Python and tools, and
+    # checks the preseed's package list against Debian's index (a wrong name stops the installer).
+    container:
+      image: debian:trixie
+      options: --privileged
+    steps:
+      - name: Install Debian packages
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates python3 python3-venv \
+            ufw apparmor-utils pamtester libpam-pwquality sudo passwd
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Every package in the preseed exists in Debian 13
+        run: |
+          pkgs=$(PYTHONPATH=src python3 -c "from family_linux.provisioner.preseed import PACKAGES; print(' '.join(PACKAGES))")
+          missing=""
+          for p in $pkgs task-kde-desktop; do
+            apt-cache show "$p" > /dev/null 2>&1 || missing="$missing $p"
+          done
+          if [ -n "$missing" ]; then echo "Not in Debian 13:$missing"; exit 1; fi
+          echo "All $(echo $pkgs | wc -w) packages found"
+
+      - name: Unit and integration tests as root
+        env:
+          FAMILY_LINUX_INTEGRATION: "1"
+        run: |
+          python3 -m venv /opt/venv
+          /opt/venv/bin/pip install -q -e ".[dev]"
+          /opt/venv/bin/pytest -v tests

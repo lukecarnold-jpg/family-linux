@@ -27,7 +27,9 @@ case "$(uname -m)" in
 esac
 ARCH="${ARCH:-$DEFAULT_ARCH}"
 case "$ARCH" in
-    arm64) PLATFORM=arm; OSTYPE=Debian_arm64; GRAPHICS=qemuramfb ;;
+    # VMSVGA, not qemuramfb: Debian's arm64 kernel has no DRM driver for qemuramfb, so the installed
+    # system had no /dev/dri and SDDM showed a black screen. vmwgfx drives VMSVGA on arm64.
+    arm64) PLATFORM=arm; OSTYPE=Debian_arm64; GRAPHICS=vmsvga ;;
     amd64) PLATFORM=x86; OSTYPE=Debian_64;    GRAPHICS=vmsvga ;;
     *) echo "ARCH must be arm64 or amd64 (got '$ARCH')" >&2; exit 2 ;;
 esac
@@ -54,7 +56,7 @@ mkdir -p "$BUILD_DIR" "$OUTPUT_DIR"
 if [ "${SKIP_ISO:-0}" = 1 ] && [ -f "$ISO" ]; then
     echo "Reusing ${ISO}"
 else
-    ARCH="$ARCH" MODE=automated "${SCRIPT_DIR}/build-debian-iso.sh"
+    ARCH="$ARCH" MODE=automated APPLIANCE=1 "${SCRIPT_DIR}/build-debian-iso.sh"
 fi
 
 # 2. VM: ${ARCH}, EFI, VirtIO disk and network, serial output to a log so the build can follow it
@@ -64,7 +66,7 @@ VM_DIR="$(dirname "$(VBoxManage showvminfo "$VM_NAME" --machinereadable | sed -n
 rm -f "$SERIAL_LOG"
 VBoxManage modifyvm "$VM_NAME" \
     --memory "$MEMORY_MB" --cpus "$CPUS" --firmware efi \
-    --graphicscontroller "$GRAPHICS" --vram 16 \
+    --graphicscontroller "$GRAPHICS" --vram 128 \
     --nic1 nat --nic-type1 virtio \
     --audio-enabled off --usb-xhci on --mouse usbtablet --keyboard usb \
     --uart1 0x3F8 4 --uart-mode1 file "$SERIAL_LOG"
@@ -76,13 +78,7 @@ VBoxManage storageattach "$VM_NAME" --storagectl VirtIO --port 1 --device 0 --ty
 # 3. Unattended install, reboot, and first-boot apply
 echo "Installing (headless). Progress: ${SERIAL_LOG}"
 VBoxManage startvm "$VM_NAME" --type headless >/dev/null
-# The boot menu waits for Enter on "Install" (the ISO never starts an install by itself). Press Enter
-# until the kernel's banner shows on the serial log, which means the menu has been passed.
-for _ in 1 2 3 4 5 6; do
-    sleep 20
-    grep -aq "Linux version" "$SERIAL_LOG" 2>/dev/null && break
-    VBoxManage controlvm "$VM_NAME" keyboardputscancode 1c 9c >/dev/null 2>&1 || true
-done
+# The automated ISO starts Install after 5 seconds at the boot menu; no key press is needed.
 deadline=$(( $(date +%s) + TIMEOUT_MIN * 60 ))
 result=""
 while [ "$(date +%s)" -lt "$deadline" ]; do
@@ -98,8 +94,15 @@ fi
 grep -a "First-boot provisioning complete" "$SERIAL_LOG" | tail -n 1
 
 # 4. Shut down cleanly, remove the ISO and the host-specific serial log, export
-echo "Shutting down..."
-VBoxManage controlvm "$VM_NAME" acpipowerbutton
+echo "Waiting for the first boot to power off..."
+# The appliance ISO powers off by itself after the first-boot apply. The power button is a fallback.
+for _ in $(seq 1 24); do
+    VBoxManage showvminfo "$VM_NAME" --machinereadable | grep -q '^VMState="poweroff"' && break
+    sleep 5
+done
+if ! VBoxManage showvminfo "$VM_NAME" --machinereadable | grep -q '^VMState="poweroff"'; then
+    VBoxManage controlvm "$VM_NAME" acpipowerbutton >/dev/null 2>&1 || true
+fi
 for _ in $(seq 1 24); do
     VBoxManage showvminfo "$VM_NAME" --machinereadable | grep -q '^VMState="poweroff"' && break
     sleep 5

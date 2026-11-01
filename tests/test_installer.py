@@ -64,7 +64,7 @@ def test_debian_preseed_generator_writes_the_install_plan():
     late = DebianPreseedGenerator(policy).generate_late_script()
     assert "family-children" in late
     assert "%family-children ALL=(ALL:ALL) !ALL" in late
-    assert "in-target ufw --force enable" in late
+    assert "in-target ufw" not in late  # ufw cannot run in the chroot; the first boot applies it
 
 
 def test_non_interactive_install_rejects_weak_parent_password(monkeypatch, capsys):

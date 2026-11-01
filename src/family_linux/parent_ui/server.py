@@ -27,7 +27,13 @@ from family_linux.models import (
     DNSProvider,
     MIN_PASSWORD_LENGTH,
 )
-from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
+from family_linux.provisioner.system import (
+    CHILD_ADDED_LAYERS,
+    CHILD_SIGN_IN_LAYERS,
+    WEB_LAYERS,
+    ProvisioningError,
+    SystemProvisioner,
+)
 from family_linux.screentime.tracker import ScreenTimeTracker
 from family_linux.audit.logger import AuditLogger
 from family_linux.security.adapter import SystemAdapter
@@ -790,7 +796,7 @@ def make_handler(
 
                 child = ChildAccount.create(username, fullname, tier, pwd)
                 policy.children.append(child)
-                provisioner.apply_policy(policy, reason=f"Created child {username} via Web UI")
+                provisioner.apply_policy(policy, reason=f"Created child {username} via Web UI", layers=CHILD_ADDED_LAYERS)
                 self._send_json({"status": "ok", "username": username})
 
             elif path == "/api/child/toggle":
@@ -799,7 +805,7 @@ def make_handler(
                 for c in policy.children:
                     if c.username == username:
                         c.enabled = enable
-                provisioner.apply_policy(policy, reason=f"Toggled child {username} via Web UI")
+                provisioner.apply_policy(policy, reason=f"Toggled child {username} via Web UI", layers=CHILD_SIGN_IN_LAYERS)
                 self._send_json({"status": "ok"})
 
             elif path == "/api/child/reset-usage":
@@ -813,7 +819,7 @@ def make_handler(
                 for c in policy.children:
                     if domain and domain not in c.web_filter.blocked_domains:
                         c.web_filter.blocked_domains.append(domain)
-                provisioner.apply_policy(policy, reason=f"Blocked domain {domain} via Web UI")
+                provisioner.apply_policy(policy, reason=f"Blocked domain {domain} via Web UI", layers=WEB_LAYERS)
                 self._send_json({"status": "ok"})
 
             elif path == "/api/web/allow":
@@ -821,7 +827,7 @@ def make_handler(
                 for c in policy.children:
                     if domain in c.web_filter.blocked_domains:
                         c.web_filter.blocked_domains.remove(domain)
-                provisioner.apply_policy(policy, reason=f"Allowed domain {domain} via Web UI")
+                provisioner.apply_policy(policy, reason=f"Allowed domain {domain} via Web UI", layers=WEB_LAYERS)
                 self._send_json({"status": "ok"})
 
             elif path == "/api/web/approve":
@@ -834,7 +840,7 @@ def make_handler(
                     child.web_filter.allowed_domains.append(domain)
                 if domain in child.web_filter.blocked_domains:
                     child.web_filter.blocked_domains.remove(domain)
-                provisioner.apply_policy(policy, reason=f"Approved {domain} for {username} via Web UI")
+                provisioner.apply_policy(policy, reason=f"Approved {domain} for {username} via Web UI", layers=WEB_LAYERS)
                 clear_request(request_file, username, domain)
                 self._send_json({"status": "ok"})
 

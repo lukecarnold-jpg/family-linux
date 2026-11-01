@@ -77,3 +77,23 @@ def test_appguard_hides_unapproved_apps_and_confines_approved_ones(tmp_path):
 def test_debian_package_folder_is_in_the_default_discovery_list():
     from family_linux.security.app_guard import SYSTEM_APP_DIRS
     assert Path("/usr/share/applications") in SYSTEM_APP_DIRS
+
+
+def test_flatpak_and_snap_are_removed_and_pinned_so_they_cannot_return(tmp_path):
+    from family_linux.security.package_gate import BLOCKED_PACKAGES, pin_in_place, render_apt_pin
+
+    pin_path = tmp_path / "no-flatpak-snap"
+    adapter = SystemAdapter(dry_run=True)  # dpkg -s "succeeds" in a dry run, so every package looks installed
+    PackageInstallGate(adapter, rule_path=tmp_path / "rule", pin_path=pin_path).apply(["kid"])
+
+    assert ["apt-get", "purge", "-y", "-q", *BLOCKED_PACKAGES] in adapter.executed_commands
+    pin = adapter.simulated_files[str(pin_path)]
+    assert pin == render_apt_pin() and pin_in_place(pin)
+    for name in ("flatpak", "plasma-discover-backend-flatpak", "snapd"):
+        assert f"Package: {name}\nPin: release *\nPin-Priority: -1\n" in pin
+
+
+def test_pin_check_fails_when_a_package_is_missing_from_the_pin():
+    from family_linux.security.package_gate import pin_in_place, render_apt_pin
+
+    assert not pin_in_place(render_apt_pin().replace("Package: flatpak\n", ""))

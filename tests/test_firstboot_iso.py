@@ -90,3 +90,54 @@ def test_gateway_reloads_the_child_rules_on_every_start():
     unit = render_service("/usr/bin/python3")
     assert f"ExecStartPre=/usr/sbin/nft -f {NFT_RULES_PATH}" in unit
     assert unit.index("ExecStartPre=") < unit.index("ExecStart=/usr/bin/python3")
+
+
+def test_firstboot_reports_installer_steps_that_failed(tmp_path, capsys):
+    from family_linux.config import PolicyConfigManager
+
+    policy_path = tmp_path / "policy.yaml"
+    PolicyConfigManager(policy_path).save_policy(_policy(), reason="test")
+    failures = tmp_path / "install-failures"
+    failures.write_text("in-target ufw --force enable\n")
+
+    assert firstboot.run(policy_path=policy_path, marker=tmp_path / "done", failures_path=failures) == 0
+    assert "installer step failed: in-target ufw --force enable" in capsys.readouterr().out
+    assert firstboot.installer_failures(tmp_path / "missing") == []
+
+
+def test_appliance_first_boot_powers_off_once_then_boots_normally(tmp_path):
+    from family_linux.config import PolicyConfigManager
+
+    policy_path = tmp_path / "policy.yaml"
+    PolicyConfigManager(policy_path).save_policy(_policy(), reason="test")
+    flag = tmp_path / "poweroff-after-firstboot"
+    flag.write_text("")
+    calls = []
+
+    assert firstboot.run(policy_path=policy_path, marker=tmp_path / "done", failures_path=tmp_path / "none",
+                         poweroff_flag=flag, power_off=lambda: calls.append("off")) == 0
+    assert calls == ["off"] and not flag.exists()
+
+
+def test_ordinary_first_boot_does_not_power_off(tmp_path):
+    from family_linux.config import PolicyConfigManager
+
+    policy_path = tmp_path / "policy.yaml"
+    PolicyConfigManager(policy_path).save_policy(_policy(), reason="test")
+    calls = []
+    firstboot.run(policy_path=policy_path, marker=tmp_path / "done", failures_path=tmp_path / "none",
+                  poweroff_flag=tmp_path / "absent", power_off=lambda: calls.append("off"))
+    assert calls == []
+
+
+def test_wallpaper_script_also_sets_the_lock_screen():
+    script = (Path(__file__).resolve().parents[1] / "config" / "bin" / "family-linux-set-wallpaper").read_text()
+    assert "kscreenlockerrc" in script and "--key Image" in script
+
+
+def test_appliance_drops_the_build_serial_console_from_the_kernel_line():
+    debian = 'GRUB_DEFAULT=0\nGRUB_CMDLINE_LINUX_DEFAULT="quiet"\nGRUB_CMDLINE_LINUX="console=ttyAMA0"\n'
+    out = firstboot.without_serial_console(debian)
+    assert 'GRUB_CMDLINE_LINUX=""' in out and 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"' in out
+    assert "console=ttyS0" not in firstboot.without_serial_console('GRUB_CMDLINE_LINUX="splash console=ttyS0"\n')
+    assert firstboot.without_serial_console(out) == out

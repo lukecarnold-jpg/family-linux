@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import pwd
-import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -64,21 +63,33 @@ def open_overrides_dir(home_root: Path, username: str, owner: Optional[Tuple[int
         raise
 
 
-def set_immutable(fd: int, immutable: bool) -> bool:
-    """Sets or clears the immutable flag on the directory behind fd. Returns False if chattr fails.
+# Linux ioctls for inode flags (linux/fs.h). The flag word is an int, read and written in place.
+FS_IOC_GETFLAGS = 0x80086601
+FS_IOC_SETFLAGS = 0x40086602
+FS_IMMUTABLE_FL = 0x00000010
 
-    chattr is given /proc/self/fd/N, so it operates on the descriptor and does not resolve the
-    path again.
+
+def set_immutable(fd: int, immutable: bool) -> bool:
+    """Sets or clears the immutable flag on the file or folder behind fd. Returns False on failure.
+
+    The flag is set with FS_IOC_SETFLAGS on the descriptor itself, so the path is never resolved
+    again. (chattr given /proc/self/fd/N refuses it on Debian 13, e2fsprogs 1.47.2: "Operation not
+    supported while reading flags", seen in the appliance; the flag was never set.) Needs root and
+    a filesystem with the flag, such as ext4; elsewhere, for example on macOS, it returns False.
     """
     try:
-        result = subprocess.run(
-            ["chattr", "+i" if immutable else "-i", f"/proc/self/fd/{fd}"],
-            pass_fds=(fd,),
-            capture_output=True,
-        )
-    except OSError:
+        import fcntl
+        import struct
+
+        buffer = bytearray(8)
+        fcntl.ioctl(fd, FS_IOC_GETFLAGS, buffer, True)
+        flags = struct.unpack_from("i", buffer)[0]
+        flags = flags | FS_IMMUTABLE_FL if immutable else flags & ~FS_IMMUTABLE_FL
+        struct.pack_into("i", buffer, 0, flags)
+        fcntl.ioctl(fd, FS_IOC_SETFLAGS, buffer)
+    except (ImportError, OSError):
         return False
-    return result.returncode == 0
+    return True
 
 
 def list_desktop_files(dir_fd: int) -> List[str]:

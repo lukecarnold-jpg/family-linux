@@ -630,6 +630,54 @@ Request from the user: act on the review's list, starting with item 1.
 - The NetworkManager and systemd-resolved DNS filter on the running system.
 - amd64: no install has run, and the BIOS boot menu is not patched.
 
+## Session 26: review fixes, priority list items 1 to 16 (branch `debian-kde`)
+
+**Request.** Opus 5.5 reviewed the project and gave a priority list (CLAUDE.md, "Review"). The user asked for it to be worked through from item 1. Each item below gives the problem, the fix and the check.
+
+| # | Item | Fix | Checked by |
+|---|------|-----|------------|
+| 1 | The interactive ISO erased the disk without asking: the preseed answered the partitioning confirmations | `generate_preseed(unattended_disk=False)` leaves them out, and the installer stops at "Write the changes to disks?". `--unattended-disk` (automated builds only) answers them | `test_preseed.py`, including the wizard export |
+| 2 | Flatpak (per-user installs, no polkit) or Snap could install apps around the parent's approval | `package_gate.py` purges `flatpak`, `snapd` and Discover's Flatpak and Snap backends if present, and pins them at priority -1. `verify` checks this | `test_package_gate.py`; installed VM: `verify` PASS, pin in place |
+| 3 | It was unconfirmed that Discover can install from the Debian repositories | The PackageKit backend ships in `plasma-discover`. No change needed | Installed VM: `.../qt6/plugins/discover/packagekit-backend.so` present |
+| 4 | The kiosk lockdown also locked the parent out of a terminal. Worse, a child could bypass it, or run any command at sign-in: SDDM's session script sources `~/.profile` for a nologin shell, and `~/.config/plasma-workspace/env`, `autostart`, `environment.d` and `systemd/user` are child-writable | The kiosk moves to `/etc/xdg/family-linux-children/kdeglobals`, applied to `family-children` only by a PAM rule in `/etc/pam.d/sddm` that sets `XDG_CONFIG_DIRS`; the old system-wide block is removed. `child_startup.py` replaces the child's startup files and folders with empty, root-owned, immutable ones through `O_NOFOLLOW` descriptors | `test_security.py`, `test_child_startup.py`; installed VM: Alt+F2 and Ctrl+Alt+T do nothing for the child, the parent's Ctrl+Alt+T opens Konsole |
+| 5 | Late-command failures were silent | Each step reports failure to `/var/lib/family-linux/install-failures` (password hashes redacted) and `install-status`; first boot and `verify` report them | `test_preseed.py` runs the real script against a temporary target. Installed VM: the three `ufw` steps were reported (see defect A) |
+| 6 | Desktop behaviour was untested | Installed VM session, below | Screenshots |
+| 7 | The appliance was exported after a hard power-off | Appliance builds (`APPLIANCE=1`) write a flag; first boot powers off once when done | `test_firstboot_iso.py`; appliance build: "Appliance build: powering off", then export |
+| 8 | The Debian image's signature was not checked | `SHA512SUMS` is verified with `gpgv` against `config/keys/debian-cd-signing.gpg` (fingerprints checked against debian.org/CD/verify) | Real build: "Signature OK"; a tampered `SHA512SUMS` is rejected (gpgv exit 1) |
+| 9 | CI never ran on Debian | New `debian` job in `ci.yml` (Debian 13 container: package names against apt's index, tests, integration as root). New `debian-install.yml`: full install of the automated amd64 ISO under QEMU (weekly, on demand, on installer changes) | Not run yet (runs when pushed) |
+| 10 | The amd64 BIOS menu was not patched | `isolinux/txt.cfg` and `gtk.cfg` get the same arguments; automated ISOs get a 5-second BIOS timeout | amd64 builds: "Preseed added to 2 BIOS boot entries"; BIOS and UEFI boot records kept |
+| 11 | Every `family-ctl` change ran the full apply | The apply is split into named layers; changes re-apply only theirs (website rules: `web`; app approvals: `apps`; sign-in: `accounts`; new child: accounts, web, desktop, apps). The dashboard uses the same sets | `test_provisioning.py` |
+| 12 | The GRUB patching was untested inline Python | `provisioner/iso.py`, tested against Debian 13.7's own menus in `tests/fixtures/` | `test_iso.py`; rebuilt ISOs give the same entry counts as before |
+| 13 | The lock screen's wallpaper was not set | The wallpaper script also writes `kscreenlockerrc` | `test_firstboot_iso.py` |
+| 14 | `docs/roadmap.md` said "31 tests passing" | Points to DEV_HIST for the count | |
+| 15 | Automated builds pressed Enter with blind key codes | Automated ISOs have a 5-second GRUB timeout; the key presses are removed | `test_iso.py`; appliance build ran without them |
+| 16 | Housekeeping | The earlier build VMs were deleted; the first appliance is kept as `dist/...arm64.previous.ova` | |
+
+**Defects found while checking the installed system (appliance, VirtualBox 7.2.20, arm64).**
+
+- **A. `ufw` cannot run in the installer's chroot.** All three late-command `ufw` steps failed (reported by item 5). The firewall is applied by the first boot anyway (`verify`: "UFW active with deny incoming" PASS). **Fix:** the late command no longer runs `ufw`.
+- **B. The immutable flag was never set.** `chattr +i /proc/self/fd/N` fails on Debian 13 (e2fsprogs 1.47.2) with "Operation not supported while reading flags on /proc/self/fd/3". The same flag on the app-menu overrides folder was never set either (`lsattr`: no `i`). The overrides code only logs to the audit file, so this went unnoticed. The startup lock warned about it at first boot. A direct `FS_IOC_SETFLAGS` ioctl on the descriptor worked on the same system (`lsattr`: `----i---`). **Fix:** `child_dirs.set_immutable` uses the ioctl.
+- **C. The appliance showed a black screen.** The VM used the `qemuramfb` graphics adapter. Debian's arm64 kernel has no DRM driver for it, so there was no `/dev/dri`, only "EFI VGA", and SDDM had nothing to draw on. Plymouth also crashed. **Fix:** arm64 VMs use VMSVGA (vmwgfx), with 128 MB of video memory. With VMSVGA the same disk showed SDDM and Plasma.
+- **D. The exported appliance still showed a black screen, even with VMSVGA.** The export turns the VM's serial port off, but the installed kernel keeps `console=ttyAMA0` from the automated ISO (`/etc/default/grub`: `GRUB_CMDLINE_LINUX="console=ttyAMA0"`). Results on the same disk: with a file-backed serial port SDDM appeared, and with the port off or "disconnected" the screen stayed black. Removing the setting by hand and running `update-grub` brought SDDM back with no serial port. **Fix:** in appliance builds, first boot removes the build's serial console from `/etc/default/grub` and runs `update-grub` before it powers off. The build still watches that first boot on the serial log.
+- Not product defects, but each cost time: VirtualBox 7 NAT cannot reach the host's `127.0.0.1` through 10.0.2.2 by default, and VirtualBox's TCP serial mode allows only one connection (a port probe took it). The checks used typed commands, with output through `sudo tee /dev/ttyAMA0` to the serial log file.
+
+**Installed-system results** (first appliance of this session, before fixes A to C; VMSVGA set by hand):
+
+| Check | Result |
+|-------|--------|
+| SDDM lists the child and the parent ("Family Administrator"); session Plasma (Wayland) | Yes |
+| The child signs in with a nologin shell | Yes, Plasma desktop |
+| Family wallpaper at first login (child and parent) | Yes |
+| Child: Alt+F2 | Nothing opens |
+| Child: Ctrl+Alt+T | Nothing opens |
+| Parent: Ctrl+Alt+T | Konsole opens |
+| Child install (`runuser -u child -- pkcon install cowsay`) | "Failed to obtain authentication"; not installed |
+| `family-ctl verify` | All PASS except "Installer finished every step" (defect A) |
+| DNS | systemd-resolved active; global DNS 185.228.168.168 and 185.228.169.168 (family); the link also lists the router (192.168.0.1) |
+| Firefox ESR policy file | `/usr/lib/firefox-esr/distribution/policies.json` present (not yet checked in `about:policies`) |
+
+**Tests.** 274 passed, 5 skipped (Session 25 ended at 243).
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
@@ -642,14 +690,16 @@ Request from the user: act on the review's list, starting with item 1.
 8. Add a pre-apply plan (dry-run diff) and consider rollback.
 9. Packaging: install the console scripts and systemd units.
 10. Scrub or recreate backups that hold old plaintext passwords.
-11. Session 25: confirm a child can sign in on the SDDM login screen and start a Plasma session with a nologin shell.
-12. Session 25: confirm the wallpaper appears at first login, and that Alt+F2 and Ctrl+Alt+T are blocked for a child.
-13. Session 25: confirm Discover asks for the parent's password before a child's install, and that the PackageKit rule takes effect.
-14. Session 25: confirm Firefox ESR reads `/usr/lib/firefox-esr/distribution/policies.json` (`about:policies`).
-15. Session 25: read `/var/log/family-linux-install.log` on the installed system and check that every late-command step ran.
+11. Session 25, answered in Session 26: a child signs in to Plasma with the nologin shell.
+12. Session 25, answered in Session 26: the wallpaper appears at first login; Alt+F2 and Ctrl+Alt+T are blocked for a child.
+13. Session 25, partly answered in Session 26: the PackageKit rule refuses a child's install without authentication. Still to see: Discover's password prompt in the child's desktop.
+14. Session 25: confirm Firefox ESR reads `/usr/lib/firefox-esr/distribution/policies.json` (`about:policies`). The file is in place.
+15. Session 25, answered in Session 26: the late command now reports each failed step; the only failures were the `ufw` steps, now removed.
 16. Session 25: find out why `smartmontools` fails to start in the VM.
-17. Session 25: the Linux CI jobs still run on Ubuntu runners. Add a Debian job, or run the install check in a VM job.
-18. Session 25: amd64 has not been installed, and its BIOS (isolinux) boot menu is not patched.
+17. Session 25, done in Session 26: Debian 13 container job and a QEMU install workflow. Neither has run yet.
+18. Session 25, partly done in Session 26: the amd64 BIOS menu is patched. No amd64 install has run yet; the `Debian install` workflow will do one.
 19. Session 25: item 7 above is obsolete: Debian uses firefox-esr, not a snap.
-20. Session 25: import `dist/family-linux-debian-stable-arm64.ova` and boot it. The appliance was exported from a VM the guest never shut down, so check that the filesystem is clean.
-21. Session 25: the amd64 BIOS (isolinux) menu is not patched, so BIOS boot does not read the preseed. The UEFI boot does.
+20. Session 26, answered: the rebuilt appliance (fix D, VMSVGA, serial port off as exported) shows SDDM with both accounts.
+23. Session 26: the child's panel has a pinned System Settings launcher (Plasma's default panel). The menu override hides System Settings from the menu; check whether the pinned launcher still opens it, and remove it from children's panels if so.
+21. Session 26: the parent's DNS also lists the router's server (from DHCP) beside the family servers. Children are unaffected (their DNS goes through the gateway). Decide whether the parent should use only the family servers.
+22. Session 26, answered: on the rebuilt appliance `lsattr` shows `i` on `~child/.profile`, `~child/.config/autostart`, `~child/.config/plasma-workspace/env` and `~child/.local/share/applications`, and `family-ctl verify` reports "All baseline checks passed".
