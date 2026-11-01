@@ -246,3 +246,43 @@ def test_hosts_blocklist_skips_wildcards_and_reports_them(tmp_path, monkeypatch)
     hosts = adapter.simulated_files["/etc/hosts"]
     assert "0.0.0.0 omegle.com" in hosts
     assert "porn" not in hosts
+
+
+DEBIAN_NSSWITCH = (
+    "passwd:         files systemd\n"
+    "hosts:          files myhostname mdns4_minimal [NOTFOUND=return] resolve [!UNAVAIL=return] dns\n"
+    "networks:       files\n"
+)
+
+
+def test_lookups_are_routed_through_dns_so_the_child_gateway_sees_them():
+    from family_linux.security.dns_filter import hosts_without_nss_resolve, lookups_use_dns
+
+    assert not lookups_use_dns(DEBIAN_NSSWITCH)
+    fixed = hosts_without_nss_resolve(DEBIAN_NSSWITCH)
+    hosts = next(line for line in fixed.splitlines() if line.startswith("hosts:"))
+    assert hosts.split()[1:] == ["files", "myhostname", "mdns4_minimal", "[NOTFOUND=return]", "dns"]
+    assert lookups_use_dns(fixed)
+    assert "passwd:         files systemd" in fixed  # other lines untouched
+    assert hosts_without_nss_resolve(fixed) == fixed
+
+
+def test_web_layer_removes_and_pins_nss_resolve(tmp_path):
+    from family_linux.security.dns_filter import NSS_RESOLVE_PIN_PATH, DNSFilterManager
+
+    adapter = SystemAdapter(dry_run=True)
+    DNSFilterManager(adapter).route_lookups_through_dns(nsswitch_path=tmp_path / "missing")
+    assert ["apt-get", "purge", "-y", "-q", "libnss-resolve"] in adapter.executed_commands
+    assert "Pin-Priority: -1" in adapter.simulated_files[str(NSS_RESOLVE_PIN_PATH)]
+
+
+def test_child_profile_lets_desktop_apps_run_but_still_denies_shells():
+    from family_linux.security.apparmor import CHILD_SESSION_PROFILE as profile
+
+    # Firefox: its own binary in /usr/lib, profile-folder locks, network, display, its sandbox
+    for rule in ("/usr/lib/** mrix,", "owner @{HOME}/** rwkl,", "network inet stream,",
+                 "#include <abstractions/wayland>", "userns,", "dbus,"):
+        assert rule in profile, rule
+    for rule in ("deny /{,usr/}bin/{,ba,da,z,fi}sh x,", "deny /usr/bin/pkexec x,", "deny /usr/bin/sudo x,",
+                 "deny network inet raw,"):
+        assert rule in profile, rule

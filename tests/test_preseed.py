@@ -199,3 +199,8 @@ def test_only_appliance_builds_power_off_after_first_boot():
     generator = DebianPreseedGenerator(_policy())
     assert "poweroff-after-firstboot" not in generator.generate_late_script()
     assert ": > $T/etc/family-linux/poweroff-after-firstboot" in generator.generate_late_script(poweroff_after_firstboot=True)
+
+
+def test_family_controls_dependency_pkexec_is_installed():
+    # Family Controls failed to load in UAT: Debian 13 ships pkexec as its own package.
+    assert "pkexec" in PACKAGES

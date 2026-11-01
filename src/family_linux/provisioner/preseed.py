@@ -43,6 +43,8 @@ PACKAGES: List[str] = [
     "python3",
     "python3-yaml",
     "python3-pyqt6",
+    # Family Controls runs family-ctl through pkexec; Debian 13 ships it apart from polkit
+    "pkexec",
     "libnotify-bin",
     # Applications for children. Installs go through Discover (the Debian app store) and need the
     # parent's password, see security/package_gate.py.

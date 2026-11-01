@@ -204,6 +204,11 @@ class SystemProvisioner:
         dns_servers = self.dns_filter.configure_provider(dns_prov)
         results["actions"].append(f"DNS filter configured ({dns_prov}: {', '.join(dns_servers)})")
 
+        # Every lookup must be a DNS query, or children's lookups go around their gateway (nss-resolve)
+        for warning in self.dns_filter.route_lookups_through_dns():
+            results["warnings"].append(warning)
+        results["actions"].append("Name lookups go through DNS (nss-resolve removed), so children's filter sees them")
+
         # Per-child web rules are enforced by the DNS gateway. Clear any machine-wide hosts block
         # left by earlier versions, because it would also block the parent.
         self.dns_filter.update_hosts_blocklist([])

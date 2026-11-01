@@ -41,6 +41,7 @@ from family_linux.security.password_policy import PAM_PASSWD_PATH, block_in_plac
 from family_linux.security.package_gate import PackageInstallGate
 from family_linux.security.desktop_lockdown import CHILD_KDEGLOBALS_PATH, SDDM_PAM_PATH, lockdown_in_place
 from family_linux.security.child_startup import startup_locked
+from family_linux.security.dns_filter import NSSWITCH_PATH, lookups_use_dns
 from family_linux.provisioner.firstboot import INSTALL_FAILURES_PATH, installer_failures
 from family_linux.security.users import SUDOERS_FILE
 from family_linux.security.dns_gateway import clear_request, load_requests
@@ -451,6 +452,7 @@ class FamilyCtl:
                 "AppArmor child profile loaded in enforce mode",
                 "Unattended security updates enabled",
                 "Parent password rules enforced by PAM",
+                "Name lookups go through DNS (children's web filter sees them)",
                 "Software changes need the parent's password (polkit rule)",
                 "Flatpak and Snap removed and pinned (no install path around the parent)",
                 "Alt+F2 run dialog and shell access locked for children (Plasma kiosk)",
@@ -522,6 +524,9 @@ class FamilyCtl:
                 record("Installer finished every step", not failed, "; ".join(failed) or str(INSTALL_FAILURES_PATH))
             else:
                 skip("Installer finished every step", "not installed from the Family Linux ISO")
+
+            nsswitch = NSSWITCH_PATH.read_text(encoding="utf-8") if NSSWITCH_PATH.exists() else ""
+            record("Name lookups go through DNS (children's web filter sees them)", lookups_use_dns(nsswitch), f"{NSSWITCH_PATH}: hosts line")
 
             package_gate = PackageInstallGate()
             record(
