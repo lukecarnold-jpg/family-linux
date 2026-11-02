@@ -190,9 +190,10 @@ Status of the Debian base (see [DEV_HIST.md](DEV_HIST.md) for the checks and the
 
 - An unattended install of Debian 13.7.0 with KDE Plasma (arm64 ISO, VirtualBox 7.2.20 on Apple silicon) completed. The first boot applied the policy with no warnings and the machine reached its login prompt.
 - Session 28: the web filter works with any browser, because it is network-level. Google Chrome (the most used browser) was installed and checked as a child: it opens confined, allowed and ECH sites load, blocked sites do not, and `chrome://policy` shows every managed setting. See `docs/web-filtering-guide.md`.
+- Session 29: browsers from Debian's repositories. Chromium and Falkon work for a child after two profile fixes. GNOME Web (Epiphany) and other WebKit browsers do not start for a child; they fail closed. Chrome, Chromium and Firefox now have their proxy setting locked, and Firefox's `about:policies` shows the managed settings. Known limit, by decision: Falkon and Konqueror cannot be managed, so a child could set them to use a proxy that skips the filter. The parent guide has a disclaimer for them (DEV_HIST open item 28).
 - Session 27 (UAT): Family Controls failed to load (missing `pkexec`), and children's Firefox failed to start (the child AppArmor profile) and then could not load sites (lookups went around the web filter through nss-resolve). All three are fixed and were checked in a VM; see DEV_HIST.
 - Checked on the installed desktop (VirtualBox, arm64): the child is listed on the SDDM login screen and signs in to Plasma; the Family wallpaper appears at first login; Alt+F2 and Ctrl+Alt+T do nothing for the child while the parent's Ctrl+Alt+T opens Konsole; a child's package install is refused without authentication; `family-ctl verify` passes.
-- Not yet checked: Discover's password prompt in the child's desktop, Firefox ESR's `about:policies`, and whether the pinned System Settings launcher on the child's panel still opens. See DEV_HIST open items.
+- Not yet checked: Discover's password prompt in the child's desktop, and whether the pinned System Settings launcher on the child's panel still opens. See DEV_HIST open items.
 - VirtualBox on Apple silicon needs the VMSVGA graphics adapter (the appliance build sets it). With `qemuramfb` the desktop stays black.
 - The amd64 ISO builds and passes its checks, but has not been installed.
 - The arm64 appliance `dist/family-linux-debian-stable-arm64.ova` is built from the same install. It has not been imported or booted yet.
@@ -200,15 +201,15 @@ Status of the Debian base (see [DEV_HIST.md](DEV_HIST.md) for the checks and the
 Not yet implemented, or not validated:
 
 - Installation to real hardware.
-- amd64 install: the ISO is built and checked in CI. A full install of the automated amd64 ISO runs in the `Debian install` workflow (QEMU), which has not run yet.
+- amd64 install: the ISO is built and checked in CI. A full install of the automated amd64 ISO passed in the `Debian install` workflow (QEMU) on PR #8. No interactive amd64 install has been done.
 - Anything that depends on the child's desktop session is only as tested as the VirtualBox run says.
 - Terminal shortcut (Ctrl+Alt+T) for child accounts is expected to be blocked by hiding Konsole; not yet confirmed.
 - CI: the `debian` job runs the tests and checks the package list in a Debian 13 container. The other Linux jobs run on Ubuntu runners.
 
 Repository status (checked with `gh` on 2026-11-01):
 
-- Default branch: `main`. It includes PR #6 (`arm64-iso`) and PR #7 (`debian-kde`, merged as `d0152db`, the Debian rebuild from Session 25). CI passed on that merge. CI runs on pushes to `main` and on pull requests into `main`.
-- Working branch: `debian-kde`, in pull request [#8](https://github.com/lukecarnold-jpg/family-linux/pull/8) into `main` (interactive ISO, appliance fixes, Session 26 review fixes, Session 27 UAT fixes, Session 28 browser and CI fixes). Its first CI run passed the full QEMU install of the amd64 ISO, the ISO check, the unit tests and the integration job. The Debian 13 container and live-apply jobs failed; the causes are fixed in the Session 28 commit (DEV_HIST Session 28). PR #8 is merged once its CI passes.
+- Default branch: `main`. It includes PR #7 (`debian-kde`, the Debian rebuild from Session 25) and PR #8 (`debian-kde`, merged as `cdd2ef7`: interactive ISO, appliance fixes, Sessions 26 to 28). CI passed on that merge. CI runs on pushes to `main` and on pull requests into `main`.
+- Working branch: `debian-kde`. Its commits that are not on `main` are the Session 29 browser changes (`33e9caa`) and this status update. They are in pull request [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) into `main`, where all 15 CI checks passed, including the QEMU install of the amd64 ISO.
 
 Design documents:
 

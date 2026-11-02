@@ -147,14 +147,27 @@ Look for any line marked **FAIL** that mentions DNS or web. If you see one, ask 
 
 The filter works the same way whichever browser your child uses. It does not live inside the browser: it checks every connection your child's account makes. A browser you install later is filtered from the moment it is installed.
 
-Family Linux also switches on its browser settings in these browsers: private and guest windows off, SafeSearch on, YouTube restricted, developer tools off, and the browser's own "secure DNS" off.
+Family Linux also switches on its browser settings in these browsers: private and guest windows off, SafeSearch on, YouTube restricted, developer tools off, the browser's own "secure DNS" off, and the proxy setting locked (a proxy could carry sites past the filter).
 
 | Browser | Filter applies | Browser settings applied |
 |---|---|---|
 | Google Chrome | Yes | Yes, checked on a Family Linux computer |
-| Firefox (installed with Family Linux) | Yes | Yes (the settings file is in place; not yet checked in Firefox's own settings page) |
-| Chromium, Microsoft Edge, Brave from Brave's own website | Yes | Should be, but not yet checked on a Family Linux computer |
+| Firefox (installed with Family Linux) | Yes | Yes, checked on a Family Linux computer |
+| Chromium (from Discover) | Yes | Yes, checked on a Family Linux computer |
+| Microsoft Edge, Brave from Brave's own website | Yes | Should be, but not yet checked on a Family Linux computer |
+| Falkon (from Discover) | Yes, checked on a Family Linux computer | No |
 | Any other browser | Yes | No |
+
+### Browsers from Discover
+
+These are the browsers in Debian's own software, as found by a test on a Family Linux computer. A browser you install does not appear in your children's menus until you turn it on in Family Controls under Apps (Chromium and Chrome are already on for 10 and over).
+
+- **Chromium** works. Your child may see a message saying an extension could not be loaded when Chromium starts. It is harmless: Family Linux stops browsers from loading extensions for children. Close the message.
+- **Falkon** works, and the filter applies. Family Linux cannot switch on its browser settings in Falkon, so SafeSearch is not forced there. Use Chrome, Firefox or Chromium if that matters to you.
+- **Konqueror** is installed with KDE but hidden from the menus by Debian.
+
+> **Please note: Falkon and Konqueror.** Family Linux cannot lock the settings in these two browsers. A child who knows how could set either one to send its traffic through a "proxy" (a go-between computer on the internet), and the websites they visit that way would not be checked by the filter. SafeSearch is not forced in them either. If you want the filter to cover everything, do not turn these two browsers on for your children in Family Controls. Use Chrome, Firefox or Chromium instead.
+- **GNOME Web (Epiphany)** and other small browsers built on the same engine (Luakit, surf, vimb) do not start for children. Their own safety sandbox clashes with Family Linux's. Nothing gets past the filter; the browser just closes. Use another browser.
 
 ### Installing Google Chrome
 

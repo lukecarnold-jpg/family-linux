@@ -309,3 +309,23 @@ def test_chrome_can_run_for_a_child_and_is_approved_where_chromium_is():
     assert "/opt/** mrix," in CHILD_SESSION_PROFILE
     for tier in (AgeTier.PRE_TEEN, AgeTier.TEEN):
         assert "google-chrome" in DEFAULT_APPROVED_APPS[tier.value]
+
+
+def test_child_profile_lets_other_debian_browsers_start_and_save():
+    from family_linux.security.apparmor import CHILD_SESSION_PROFILE as profile
+
+    # Debian's /usr/bin/chromium is a shell script, so it must be readable as well as runnable
+    assert "/usr/bin/** rix," in profile and "/bin/** rix," in profile
+    assert "deny /usr/** w," in profile
+    # Falkon (Qt) saves by linking an unnamed temporary file into place
+    assert "flags=(attach_disconnected, mediate_deleted)" in profile
+
+
+def test_managed_browsers_cannot_be_pointed_at_a_proxy():
+    from family_linux.models import WebFilterPolicy
+    from family_linux.security.browser import BrowserPolicyManager
+
+    manager = BrowserPolicyManager(SystemAdapter(dry_run=True))
+    assert manager.generate_chromium_policy(WebFilterPolicy())["ProxySettings"] == {"ProxyMode": "direct"}
+    assert manager.generate_brave_policy(WebFilterPolicy())["ProxySettings"] == {"ProxyMode": "direct"}
+    assert manager.generate_firefox_policy(WebFilterPolicy())["policies"]["Proxy"] == {"Mode": "none", "Locked": True}

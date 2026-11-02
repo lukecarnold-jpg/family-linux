@@ -721,6 +721,26 @@ Request from the user: act on the review's list, starting with item 1.
 
 **Tests.** 282 passed, 5 skipped.
 
+## Session 29: other browsers from Debian's repositories (branch `debian-kde`)
+
+**Request.** Review and check the other web browsers available through the Debian applications store.
+
+**Method.** A test VM (`Family Linux Browsers`, arm64, from the Session 28 build) with Chromium, Falkon, GNOME Web (Epiphany) and Konqueror installed by the parent from Debian's repositories. Each was approved and run as the child. Denials were read from the kernel log on a parent console.
+
+**Findings and fixes.**
+
+- **The filter covers every browser.** It is network-level (Session 28). With Chrome, Firefox, Chromium and Falkon: `example.com` loaded, `www.tiktok.com` was blocked, and `www.cloudflare.com` (ECH) loaded.
+- **A new browser is hidden from children until the parent approves it** (Chromium and Chrome are approved by default for 10 and over). Konqueror is hidden by Debian itself (`NoDisplay=true`).
+- **Chromium did not start for a child.** `DENIED open /usr/bin/chromium r`: Debian's `/usr/bin/chromium` is a shell script, and the profile allowed `/usr/bin/**` to be run but not read. **Fix:** `/usr/bin/** rix` and `/bin/** rix`, with `deny /usr/** w`.
+- **Falkon ran but saved nothing** (settings, bookmarks, ad-block lists). About 40 `link` denials with `info="Failed name lookup - deleted entry"`: Qt's `QSaveFile` writes an unnamed `O_TMPFILE` file and links it into place with `linkat`, and AppArmor refuses a link whose source has no name. Reproduced outside Falkon with a short Python `linkat` test under `aa-exec -p family-linux-child` ("No such file or directory" and the same denial). An `owner link @{HOME}/** -> @{HOME}/**` rule did not help. **Fix:** profile flag `mediate_deleted`, so the link is checked by path. The Python test then linked, and a Falkon session (start, load a page, quit) logged no denials.
+- **GNOME Web (Epiphany) does not start for a child.** WebKit's `bwrap` sandbox needs mount and capability changes (`mkdir /proc/`, `setpcap`, `mount` denied, then a core dump). Allowing those capabilities did not make it start, and would loosen the profile. Left unsupported: it fails closed (the browser exits). The same applies to other WebKitGTK browsers (Luakit, surf, vimb); not tested one by one.
+- **Proxy settings could carry sites past the filter.** The child's nftables rules accept any port to an allowed address, so a browser set to use a proxy on another port goes around the name check. **Fix for managed browsers:** Chromium family `ProxySettings: {"ProxyMode": "direct"}`; Firefox `Proxy: {"Mode": "none", "Locked": true}`. Checked in the VM: `chrome://policy` lists `ProxySettings` with status OK, and Firefox's `about:policies` lists `Proxy` (Mode "none", Locked). Firefox uses `/etc/firefox/policies/policies.json` before the copy in its distribution folder; the code writes all three, so the Session 25 question about `about:policies` is answered. Unmanaged browsers (Falkon, Konqueror) still have the gap. The user decided not to restrict children's ports; the parent guide carries a disclaimer for those two browsers (open item 28).
+- **Chromium shows "Error Loading Extension" at start-up for a child.** Debian's Chromium loads `plasma-browser-integration` with `--load-extension`, which `ExtensionInstallBlocklist ["*"]` refuses. Harmless; the parent guide says so.
+
+**Parent guide.** `docs/web-filtering-guide.md` has the checked results per browser and a "Browsers from Discover" section.
+
+**Tests.** 284 passed, 5 skipped. `config/chromium/family-policy.json` and `config/firefox/policies.json` regenerated.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
@@ -736,7 +756,7 @@ Request from the user: act on the review's list, starting with item 1.
 11. Session 25, answered in Session 26: a child signs in to Plasma with the nologin shell.
 12. Session 25, answered in Session 26: the wallpaper appears at first login; Alt+F2 and Ctrl+Alt+T are blocked for a child.
 13. Session 25, partly answered in Session 26: the PackageKit rule refuses a child's install without authentication. Still to see: Discover's password prompt in the child's desktop.
-14. Session 25: confirm Firefox ESR reads `/usr/lib/firefox-esr/distribution/policies.json` (`about:policies`). The file is in place.
+14. Session 25, answered in Session 29 (it reads `/etc/firefox/policies/policies.json` first; all three copies are written): confirm Firefox ESR reads `/usr/lib/firefox-esr/distribution/policies.json` (`about:policies`). The file is in place.
 15. Session 25, answered in Session 26: the late command now reports each failed step; the only failures were the `ufw` steps, now removed.
 16. Session 25: find out why `smartmontools` fails to start in the VM.
 17. Session 25, done in Session 26: Debian 13 container job and a QEMU install workflow. Neither has run yet.
@@ -749,4 +769,6 @@ Request from the user: act on the review's list, starting with item 1.
 24. Session 27: Firefox's background services (`firefox.settings.services.mozilla.com`, which carries Firefox's security blocklists, and `location.services.mozilla.com`) show up as website requests for the parent. Decide whether to allow the Mozilla update and security services for children by default and leave them out of the requests list.
 25. Session 27, answered: on a fresh import of the rebuilt appliance (first boot: 26 actions, no warnings), Family Controls opened from the launcher and loaded after the polkit prompt; Firefox opened for the child from the launcher; `example.com` and Firefox's privacy page on mozilla.org loaded.
 26. Session 28: Chrome lets a child sign in to a Google account and sync. Decide whether to turn sign-in off for children (`BrowserSignin: 0`, `SyncDisabled`).
-27. Session 28: check the Brave, Edge and Chromium settings in each browser's policy page, as was done for Chrome.
+27. Session 28, partly answered in Session 29 (Chromium checked): check the Brave and Edge settings in each browser's policy page, as was done for Chrome.
+28. Session 29, decided: browsers Family Linux cannot manage (Falkon, Konqueror) can still be set to use a proxy on a port other than 80 and 443, which the child's nftables rules accept. The user chose not to limit children's ports; the parent guide has a disclaimer for the two browsers instead.
+29. Session 29: the profile changes (`rix`, `deny /usr/** w`, `mediate_deleted`) were checked by editing the VM's installed profile. Rebuild the appliance and check Chromium and Falkon again from a fresh install.

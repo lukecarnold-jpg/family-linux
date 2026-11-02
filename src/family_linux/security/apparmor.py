@@ -18,7 +18,10 @@ PROFILE_PATH = APPARMOR_DIR / "family-linux-child"
 CHILD_SESSION_PROFILE = """# AppArmor profile for Family Linux child session confinement
 #include <tunables/global>
 
-profile family-linux-child flags=(attach_disconnected) {
+# mediate_deleted: Qt apps (Falkon) save files by writing an unnamed temporary file and then linking
+# it into place. Without the flag every such link was refused ("Failed name lookup - deleted entry"),
+# so settings, bookmarks and lists were never saved. With it the link is checked by path like any other.
+profile family-linux-child flags=(attach_disconnected, mediate_deleted) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/user-tmp>
@@ -65,9 +68,11 @@ profile family-linux-child flags=(attach_disconnected) {
   /etc/** r,
   /usr/share/** r,
   /usr/local/share/** r,
-  /usr/bin/** ix,
+  # Read as well as run: some browsers start from a shell script (Debian's /usr/bin/chromium)
+  /usr/bin/** rix,
   /usr/libexec/** ix,
-  /bin/** ix,
+  /bin/** rix,
+  deny /usr/** w,
   # Chrome's sandbox lists /proc itself; without the folder rule it stopped at start-up
   @{PROC}/ r,
   @{PROC}/** r,

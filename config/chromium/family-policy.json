@@ -6,6 +6,9 @@
   "DnsOverHttpsMode": "off",
   "EncryptedClientHelloEnabled": false,
   "BrowserGuestModeEnabled": false,
+  "ProxySettings": {
+    "ProxyMode": "direct"
+  },
   "ExtensionInstallBlocklist": [
     "*"
   ]
