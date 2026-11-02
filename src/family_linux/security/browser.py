@@ -60,6 +60,8 @@ class BrowserPolicyManager:
                 "network.dns.echconfig.enabled": False,
                 "network.dns.http3_echconfig.enabled": False,
             },
+            # A proxy on a port the filter does not watch would carry every site past it
+            "Proxy": {"Mode": "none", "Locked": True},
         }
 
         return {"policies": policies}
@@ -83,6 +85,8 @@ class BrowserPolicyManager:
             "EncryptedClientHelloEnabled": False,
             # Guest windows are private windows by another name
             "BrowserGuestModeEnabled": not web_filter.block_incognito,
+            # A proxy on a port the filter does not watch would carry every site past it
+            "ProxySettings": {"ProxyMode": "direct"},
         }
 
         if web_filter.disable_extensions_install:
