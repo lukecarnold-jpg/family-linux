@@ -209,7 +209,7 @@ Not yet implemented, or not validated:
 Repository status (checked with `gh` on 2026-11-01):
 
 - Default branch: `main`. It includes PR #7 (`debian-kde`, the Debian rebuild from Session 25) and PR #8 (`debian-kde`, merged as `cdd2ef7`: interactive ISO, appliance fixes, Sessions 26 to 28). CI passed on that merge. CI runs on pushes to `main` and on pull requests into `main`.
-- Working branch: `debian-kde`. Its commits that are not on `main` are the Session 29 browser changes (`33e9caa`) and this status update. There is no open pull request, so they have no CI run yet.
+- Working branch: `debian-kde`. Its commits that are not on `main` are the Session 29 browser changes (`33e9caa`) and this status update. They are in pull request [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) into `main`, where all 15 CI checks passed, including the QEMU install of the amd64 ISO.
 
 Design documents:
 
