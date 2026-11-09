@@ -8,7 +8,6 @@
     },
     "SearchSuggestEnabled": true,
     "Preferences": {
-      "browser.safesearch.enabled": true,
       "browser.urlbar.suggest.searches": true,
       "network.trr.mode": 5,
       "network.dns.echconfig.enabled": false,

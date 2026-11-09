@@ -77,7 +77,8 @@ def test_browser_policy_generation():
     ff = bp.generate_firefox_policy(web_filter)
     assert ff["policies"]["DisablePrivateBrowsing"] is True
     assert ff["policies"]["DisableDeveloperTools"] is True
-    assert ff["policies"]["Preferences"]["browser.safesearch.enabled"] is True
+    # Firefox has no SafeSearch setting; the made-up pref is gone and the gateway forces SafeSearch
+    assert "browser.safesearch.enabled" not in ff["policies"]["Preferences"]
 
     chromium = bp.generate_chromium_policy(web_filter)
     assert chromium["IncognitoModeAvailability"] == 1
@@ -206,10 +207,50 @@ def test_pam_block_keeps_sddms_own_rules_and_applies_once():
     from family_linux.security.desktop_lockdown import with_pam_block
 
     sddm = "#%PAM-1.0\n@include common-auth\nsession required pam_limits.so\n@include common-session\n"
-    once = with_pam_block(sddm)
-    assert once.startswith(sddm.rstrip("\n"))
-    assert with_pam_block(once) == once
-    assert once.count("pam_env.so") == 1
+    once = with_pam_block(sddm, python="/usr/bin/python3")
+    lines = once.splitlines()
+    # SDDM's own lines are all kept, in order
+    assert [line for line in lines if line in sddm.splitlines()] == sddm.splitlines()
+    assert with_pam_block(once, python="/usr/bin/python3") == once
+    assert once.count("pam_env.so") == 1 and once.count("child_startup --pam") == 1
+    # The sign-in files are re-locked before common-session starts the user's systemd manager
+    assert once.index("child_startup --pam") < once.index("@include common-session")
+
+
+def test_pam_relock_goes_at_the_end_without_common_session():
+    from family_linux.security.desktop_lockdown import with_pam_block
+
+    once = with_pam_block("#%PAM-1.0\nsession required pam_limits.so\n", python="/usr/bin/python3")
+    assert "pam_exec.so quiet type=open_session /usr/bin/python3 -m family_linux.security.child_startup --pam" in once
+    relock = once.splitlines().index("session required pam_exec.so quiet type=open_session /usr/bin/python3 -m family_linux.security.child_startup --pam")
+    assert "notingroup family-children" in once.splitlines()[relock - 1]
+
+
+def test_kiosk_stops_running_desktop_files_and_open_with_commands():
+    from family_linux.security.desktop_lockdown import render_child_kdeglobals
+
+    kiosk = render_child_kdeglobals()
+    assert "run_desktop_files=false" in kiosk and "action/openwith=false" in kiosk
+
+
+def test_confined_entries_do_not_start_over_dbus():
+    # D-Bus activation ignores Exec, so the aa-exec prefix would not apply.
+    from family_linux.security.app_guard import confine_desktop_entry
+
+    out = confine_desktop_entry("[Desktop Entry]\nName=Calc\nExec=kcalc %u\nDBusActivatable=true\n")
+    assert "Exec=aa-exec -p family-linux-child -- kcalc %u" in out
+    assert "DBusActivatable=false" in out and "DBusActivatable=true" not in out
+
+
+def test_child_profile_denies_interpreters_and_service_starters():
+    from family_linux.security.apparmor import CHILD_SESSION_PROFILE as profile
+
+    interp = next(line for line in profile.splitlines() if "python" in line and line.strip().startswith("deny"))
+    assert "python[0-9]*" in interp and "perl" in interp
+    starters = next(line for line in profile.splitlines() if "systemd-run" in line and line.strip().startswith("deny"))
+    assert "systemctl" in starters and "dbus-send" in starters
+    assert "member={StartUnit," in profile and "StartTransientUnit" in profile
+    assert "member=UpdateActivationEnvironment," in profile
 
 
 def test_lockdown_removes_the_old_system_wide_block_so_the_parent_gets_a_terminal_back(tmp_path):
@@ -329,3 +370,29 @@ def test_managed_browsers_cannot_be_pointed_at_a_proxy():
     assert manager.generate_chromium_policy(WebFilterPolicy())["ProxySettings"] == {"ProxyMode": "direct"}
     assert manager.generate_brave_policy(WebFilterPolicy())["ProxySettings"] == {"ProxyMode": "direct"}
     assert manager.generate_firefox_policy(WebFilterPolicy())["policies"]["Proxy"] == {"Mode": "none", "Locked": True}
+
+
+@pytest.mark.parametrize("app_id,allowed", [
+    ("chromium.desktop", True),
+    ("google-chrome", True),
+    ("libreoffice-writer.desktop", True),
+    ("libreoffice-calc", True),
+    # Before the fix these all matched by substring
+    ("chromium-bsu.desktop", False),
+    ("google-chrome-beta", False),
+    ("kde", False),
+    ("org", False),
+    ("office", False),
+    ("vl", False),
+    ("fire", False),
+    ("libreoffice", True),
+])
+def test_approved_apps_match_exactly(app_id, allowed):
+    from family_linux.security.adapter import SystemAdapter
+    from family_linux.security.app_guard import AppGuard
+    from family_linux.kde_app.backend import approved_entries_for
+
+    child = ChildAccount.create("kid", "Kid", "pre_teen")
+    assert AppGuard(SystemAdapter(dry_run=True)).is_app_allowed(child, app_id) is allowed
+    # Family Controls shows the same answer as the menu filter
+    assert bool(approved_entries_for(app_id, child.app_policy.approved_apps)) is allowed

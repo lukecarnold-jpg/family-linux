@@ -258,15 +258,100 @@ def test_parse_answer_addresses_ignores_errors_and_truncation():
 
 
 def test_allow_list_adds_each_address_with_clamped_timeout():
-    calls = []
-    allow = gw.AddressAllowList(1002, runner=lambda args: calls.append(args) or 0)
+    scripts = []
+    allow = gw.AddressAllowList(1002, runner=lambda script: scripts.append(script) or 0)
     assert allow.add([("93.184.216.34", 300), ("2001:db8::1", 5), ("10.0.0.1", 99999)]) == 3
-    adds = [c for c in calls if c[0] == "add"]
-    assert adds[0][-2] == "93.184.216.34 timeout 300s" and adds[0][4] == "allow4_1002"
-    assert adds[1][-2] == "2001:db8::1 timeout 60s" and adds[1][4] == "allow6_1002"
-    assert adds[2][-2] == "10.0.0.1 timeout 3600s"
-    # each address is deleted before it is added, so the timeout refreshes
-    assert calls[0][0] == "delete"
+    # One nft transaction per answer, not two nft processes per address
+    assert len(scripts) == 1
+    lines = scripts[0].splitlines()
+    assert lines[0] == "add element inet family_linux allow4_1002 { 93.184.216.34 timeout 300s }"
+    # add (so it exists), delete, add again: the timeout refreshes with no gap
+    assert lines[1] == "delete element inet family_linux allow4_1002 { 93.184.216.34 }"
+    assert lines[2] == lines[0]
+    assert "allow6_1002 { 2001:db8::1 timeout 60s }" in scripts[0]
+    assert "{ 10.0.0.1 timeout 3600s }" in scripts[0]
+
+
+def test_allow_list_reports_nothing_added_when_nft_fails():
+    allow = gw.AddressAllowList(1002, runner=lambda script: 1)
+    assert allow.add([("93.184.216.34", 300)]) == 0
+    assert gw.AddressAllowList(1002, runner=lambda script: 0).add([]) == 0
+
+
+def test_second_upstream_is_used_when_the_first_does_not_answer(tmp_path):
+    calls = []
+
+    def forward(query, upstream, tcp):
+        calls.append(upstream)
+        return None if upstream == "185.228.168.168" else query[:2] + struct.pack("!H", 0x8180) + query[4:12]
+
+    log = gw.RequestLog(tmp_path / "requests.json")
+    res = gw.ChildResolver("kid", gw.DomainRules([], []), ["185.228.168.168", "185.228.169.168"], "1.1.1.1", log, forward=forward)
+    reply = res.answer(make_query("example.org"))
+    assert calls == ["185.228.168.168", "185.228.169.168"]
+    assert reply[3] & 0x0F == 0
+    # Only the failing one: SERVFAIL
+    res.family_upstreams = ["185.228.168.168"]
+    assert res.answer(make_query("example.org"))[3] & 0x0F == gw.RCODE_SERVFAIL
+
+
+def test_a_zero_address_block_is_recorded_and_never_allowed(tmp_path):
+    # Some family services block with 0.0.0.0 instead of NXDOMAIN; that used to be missed as a
+    # request and 0.0.0.0 was added to the child's allow list.
+    query = make_query("blocked.example")
+    scripts = []
+    log = gw.RequestLog(tmp_path / "requests.json")
+    res = gw.ChildResolver(
+        "kid", gw.DomainRules([], []), "1.1.1.3", "1.1.1.1", log,
+        forward=lambda q, u, t: _answer_reply(q, [("0.0.0.0", 60)]),
+        allow_list=gw.AddressAllowList(1002, runner=lambda script: scripts.append(script) or 0),
+    )
+    res.answer(query)
+    log.flush()
+    assert scripts == []
+    assert "blocked.example" in json.loads((tmp_path / "requests.json").read_text())["kid"]
+
+
+def test_reload_changes_rules_without_a_restart(tmp_path):
+    config_path = tmp_path / "gateway.json"
+    config_path.write_text(json.dumps({"children": [{"username": "kid", "blocked": ["games.example"], "allowed": []}]}))
+
+    class Ctx:
+        rules = None
+
+    res, _ = resolver(tmp_path, FakeForwarder(), blocked=(), allowed=())
+    ctx = Ctx()
+    assert res.rules.decide("games.example") == "default"
+    assert gw.reload_rules(config_path, {"kid": (res, ctx), "gone": (res, None)}) == 1
+    assert res.rules.decide("games.example") == "block" and ctx.rules is res.rules
+    # A broken file leaves the rules as they were
+    config_path.write_text("{not json")
+    assert gw.reload_rules(config_path, {"kid": (res, ctx)}) == 0
+    assert res.rules.decide("games.example") == "block"
+
+
+def test_website_rule_changes_reload_and_new_children_restart(monkeypatch):
+    from family_linux.security import web_gateway
+
+    monkeypatch.setattr(web_gateway.WebGateway, "_uid", lambda self, name: 1001)
+    adapter = SystemAdapter(dry_run=True)
+    gateway = WebGateway(adapter)
+    policy = FamilyPolicy(parent=ParentAccount("parent", "Parent"), children=[ChildAccount.create("kid", "Kid")])
+    gateway.apply(policy)
+    assert ["systemctl", "restart", "family-dnsd"] in adapter.executed_commands
+
+    adapter.executed_commands.clear()
+    policy.children[0].web_filter.blocked_domains.append("games.example")
+    gateway.apply(policy)
+    assert ["systemctl", "reload", "family-dnsd"] in adapter.executed_commands
+    assert ["systemctl", "restart", "family-dnsd"] not in adapter.executed_commands
+    # Same rules text: the nft table (and the children's allow sets) is not reloaded
+    assert ["nft", "-f", str(NFT_RULES_PATH)] not in adapter.executed_commands
+
+    adapter.executed_commands.clear()
+    policy.children.append(ChildAccount.create("kid2", "Kid Two"))
+    gateway.apply(policy)
+    assert ["systemctl", "restart", "family-dnsd"] in adapter.executed_commands
 
 
 def test_allowed_answers_feed_the_child_allow_list_but_blocked_answers_do_not(tmp_path):
@@ -373,3 +458,84 @@ def test_ech_config_ids_are_learned_from_https_records():
     reply = query[:2] + struct.pack("!H", 0x8180) + struct.pack("!HHHH", 1, 1, 0, 0) + query[12:]
     reply += b"\xc0\x0c" + struct.pack("!HHIH", 65, 1, 300, len(rdata)) + rdata
     assert gw.parse_answer_ech_config_ids(reply) == [(42, 300)]
+
+
+def test_rules_cover_children_accepts_uid_or_name():
+    from family_linux.security.web_gateway import rules_cover_children
+
+    listing = 'table inet family_linux {\n  meta skuid 1001 udp dport 53 redirect to :5301\n  meta skuid "bobby" drop\n}\n'
+    assert rules_cover_children(listing, {"alice": 1001, "bobby": 1002}) == []
+    assert rules_cover_children(listing, {"carol": 1003}) == ["carol"]
+    # 1001 must not match a longer UID such as 10010
+    assert rules_cover_children("meta skuid 10010 drop\n", {"alice": 1001}) == ["alice"]
+
+
+@pytest.mark.parametrize("ipv6", [True, False])
+def test_a_child_reaches_only_their_own_gateway_ports_on_loopback(ipv6):
+    rules = render_nft([(1001, 5301, 5401), (1002, 5302, 5402)], ipv6=ipv6).splitlines()
+    own = next(i for i, line in enumerate(rules) if "skuid 1001 ip daddr 127.0.0.0/8" in line and "{ 5301, 5401 }" in line)
+    others = next(i for i, line in enumerate(rules) if "skuid 1001 ip daddr 127.0.0.0/8" in line and "5301-5499 drop" in line)
+    loopback = rules.index("    meta skuid 1001 ip daddr 127.0.0.0/8 accept")
+    assert rules[own].endswith("accept") and own < others < loopback
+
+
+def test_gateway_service_is_sandboxed():
+    from family_linux.security.web_gateway import render_service
+
+    unit = render_service("/usr/bin/python3")
+    for line in ("CapabilityBoundingSet=CAP_NET_ADMIN", "NoNewPrivileges=yes", "ProtectSystem=strict",
+                 "ReadWritePaths=/var/lib/family-linux", "ProtectHome=yes", "UMask=0077",
+                 "ExecReload=/bin/kill -HUP $MAINPID"):
+        assert line in unit
+
+
+def test_safe_search_names_get_the_filtered_services_addresses(tmp_path):
+    asked = []
+
+    def forward(query, upstream, tcp):
+        name, qtype, _ = gw.parse_question(query)
+        asked.append((name, qtype))
+        return _answer_reply(query, [("216.239.38.120", 300)])
+
+    log = gw.RequestLog(tmp_path / "requests.json")
+    res = gw.ChildResolver("kid", gw.DomainRules([], []), "1.1.1.3", "1.1.1.1", log, forward=forward, safe_search=True)
+    query = make_query("www.google.com.au")
+    reply = res.answer(query)
+    assert asked == [("forcesafesearch.google.com", 1)]
+    # Answered under the name asked for, with the transaction ID of the child's query
+    assert reply[:2] == query[:2] and gw.parse_question(reply)[0] == "www.google.com.au"
+    assert gw.parse_answer_addresses(reply) == [("216.239.38.120", 300)]
+    # HTTPS records could carry the unfiltered addresses, so they get an empty answer
+    asked.clear()
+    assert gw.parse_answer_addresses(res.answer(make_query("www.youtube.com", qtype=65))) == []
+    assert asked == []
+    # Other names, and children without SafeSearch, are untouched
+    res.answer(make_query("example.org"))
+    assert asked[-1] == ("example.org", 1)
+    res.safe_search = False
+    res.answer(make_query("www.bing.com"))
+    assert asked[-1] == ("www.bing.com", 1)
+
+
+@pytest.mark.parametrize("name,target", [
+    ("www.google.com", "forcesafesearch.google.com"),
+    ("www.google.co.uk", "forcesafesearch.google.com"),
+    ("WWW.Bing.com.", "strict.bing.com"),
+    ("duckduckgo.com", "safe.duckduckgo.com"),
+    ("m.youtube.com", "restrict.youtube.com"),
+    ("google.com", None),
+    ("www.google.evil.example", None),
+])
+def test_safe_search_targets(name, target):
+    assert gw.safe_search_target(name) == target
+
+
+def test_each_child_uses_their_own_dns_provider():
+    kid = ChildAccount.create("kid", "Kid")
+    teen = ChildAccount.create("teen", "Teen", age_tier=AgeTier.TEEN)
+    teen.web_filter.dns_provider = "cloudflare_family"
+    config = render_config(FamilyPolicy(parent=ParentAccount("parent", "Parent"), children=[kid, teen]), "cleanbrowsing_family")
+    by_name = {c["username"]: c for c in config["children"]}
+    assert by_name["kid"]["family_upstreams"] == ["185.228.168.168", "185.228.169.168"]
+    assert by_name["teen"]["family_upstreams"] == ["1.1.1.3", "1.0.0.3"]
+    assert by_name["kid"]["safe_search"] is True

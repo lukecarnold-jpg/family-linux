@@ -79,8 +79,13 @@ class UserManager:
         self.configure_sudoers(parent.username)
         return True
 
-    def provision_child(self, child: ChildAccount) -> bool:
-        """Creates or updates a restricted child user account."""
+    def provision_child(self, child: ChildAccount, unlock: bool = True) -> bool:
+        """Creates or updates a restricted child user account.
+
+        With unlock=False an enabled child is not unlocked here: a new account, or one whose password
+        was just set, is left locked, and an existing account keeps its state. The caller unlocks it
+        once the web filter and the other rules are in place (see SystemProvisioner).
+        """
         self.setup_security_groups()
 
         errors = child.validate()
@@ -88,7 +93,8 @@ class UserManager:
             raise ValueError(f"Invalid child account specification: {'; '.join(errors)}")
 
         check = self.adapter.run_command(["id", "-u", child.username])
-        if check.returncode != 0:
+        created = check.returncode != 0
+        if created:
             cmd = [
                 "useradd",
                 "-m",
@@ -120,8 +126,11 @@ class UserManager:
 
         if not child.enabled:
             self.disable_child(child.username)
-        else:
+        elif unlock:
             self.enable_child(child.username)
+        elif created or child.password:
+            # chpasswd unlocks the account; keep it locked until the caller has applied the rules.
+            self.disable_child(child.username)
 
         return True
 
@@ -133,13 +142,20 @@ class UserManager:
         """Enables child login (unlocks password)."""
         self.adapter.run_command(["usermod", "-U", username])
 
-    def delete_child(self, username: str, remove_home: bool = False) -> None:
-        """Deletes a child account."""
+    def end_sessions(self, username: str) -> None:
+        """Signs the user out and stops their remaining processes (userdel refuses while any run)."""
+        self.adapter.run_command(["loginctl", "terminate-user", username])
+        self.adapter.run_command(["pkill", "-KILL", "-u", username])
+
+    def delete_child(self, username: str, remove_home: bool = False) -> bool:
+        """Deletes a child account. Returns False if the account is still there afterwards."""
         cmd = ["userdel"]
         if remove_home:
             cmd.append("-r")
         cmd.append(username)
-        self.adapter.run_command(cmd)
+        result = self.adapter.run_command(cmd)
+        # userdel exits 6 when the account does not exist, which is the state wanted here.
+        return result.returncode in (0, 6)
 
     def set_password(self, username: str, password: str) -> None:
         """Sets user password via chpasswd."""

@@ -12,16 +12,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
+      # Debian 13 ships Python 3.13. macOS is kept once, for development on a Mac.
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - os: macos-latest
+            python-version: "3.13"
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
@@ -63,10 +67,10 @@ jobs:
     # Safe only because the runner is ephemeral.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -94,10 +98,10 @@ jobs:
     # loads the AppArmor profile, and changes DNS. Nothing after this step needs the network.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -124,6 +128,22 @@ jobs:
 
       - name: Verify baseline on the live system
         run: sudo "$(which python)" -m family_linux.cli.family_ctl verify
+
+      - name: Confirm the screen time service is running and signs out a child over their limit
+        run: |
+          systemctl is-active family-policyd
+          # A limit of 0 minutes: the next cycle must try to end the child's session. The child has no
+          # session on the runner, so look for the audit record rather than a sign-out.
+          sudo "$(which python)" -m family_linux.cli.family_ctl time set cikid --daily-limit 0
+          sudo "$(which python)" -c "
+          from family_linux.screentime.daemon import ScreenTimeDaemon
+          d = ScreenTimeDaemon()
+          d.get_logged_in_users = lambda: ['cikid']
+          d.check_and_enforce_cycle()
+          "
+          sudo grep -q '"event_type": "TIME_CURFEW", "user": "cikid"' /var/log/family-linux/audit.log
+          echo "screen time: limit reached, session end requested for cikid"
+          sudo "$(which python)" -m family_linux.cli.family_ctl time set cikid --daily-limit 90
 
       - name: Confirm the child AppArmor profile is loaded and launches a process
         run: |
@@ -154,6 +174,14 @@ jobs:
               exit 1
             fi
             echo "confined start of $shell: denied"
+          done
+          # Interpreters and the tools that start programs outside the profile are refused too.
+          for cmd in "python3 -c pass" "perl -e 1" "systemd-run --user true" "systemctl --version"; do
+            if sudo aa-exec -p family-linux-child -- /usr/bin/env $cmd > /dev/null 2>&1; then
+              echo "FAIL: confined process ran: $cmd"
+              exit 1
+            fi
+            echo "confined start of ${cmd%% *}: denied"
           done
           # Positive control for the same check: a permitted binary still runs.
           sudo aa-exec -p family-linux-child -- /usr/bin/env true
@@ -208,8 +236,15 @@ jobs:
           PY
           chmod 644 /tmp/tls_check.py
           # Control: the parent reaches a server directly, without the child's redirect.
-          python3 -c "import socket; socket.create_connection(('9.9.9.9', 443), timeout=10).close()"
-          echo "parent direct connect to 9.9.9.9:443: ok"
+          # Retried: a single timeout from the runner's network failed this run once (PR #9), which
+          # says nothing about the child's rules.
+          for attempt in 1 2 3; do
+            if python3 -c "import socket; socket.create_connection(('9.9.9.9', 443), timeout=10).close()"; then
+              echo "parent direct connect to 9.9.9.9:443: ok (attempt $attempt)"; break
+            fi
+            [ "$attempt" = 3 ] && { echo "control failed 3 times: the runner cannot reach 9.9.9.9:443"; exit 1; }
+            sleep 10
+          done
           ip=$(sudo -u cikid getent ahostsv4 example.com | awk 'NR==1{print $1}')
           echo "child lookup example.com -> ${ip:-none}"
           test -n "$ip"
@@ -363,10 +398,10 @@ jobs:
     # on a CI runner is too slow for this job. Run the install on hardware or a dedicated VM.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -410,7 +445,7 @@ jobs:
           sha256sum "$ISO" | tee iso.sha256
 
       - name: Upload the ISO checksum
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: family-linux-amd64-iso-sha256
           path: iso.sha256
@@ -431,7 +466,7 @@ jobs:
             ufw apparmor-utils pamtester libpam-pwquality cracklib-runtime sudo passwd
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Every package in the preseed exists in Debian 13
         run: |

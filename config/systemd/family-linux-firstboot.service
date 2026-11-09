@@ -3,6 +3,9 @@ Description=Family Linux: apply the policy once after the first boot
 # The installer creates the accounts; systemd-resolved must be running for the DNS filter to apply.
 After=network-online.target systemd-resolved.service
 Wants=network-online.target
+# The sign-in screen waits for the first attempt, so nobody signs in to a half-configured system.
+# Children stay locked until an attempt succeeds (the installer creates them locked).
+Before=display-manager.service
 ConditionPathExists=!/var/lib/family-linux/firstboot.done
 StartLimitIntervalSec=0
 

@@ -12,6 +12,7 @@ shell is quoted with shlex.quote.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import secrets
 import shlex
@@ -84,11 +85,22 @@ def _with_failure_check(line: str) -> str:
     if not line.strip() or line.lstrip().startswith("#"):
         return line
     label = re.sub(r"\$6\$[^' ]*", "<hash>", line)
+    label = re.sub(r"grub\.pbkdf2\.[^' ]*", "<hash>", label)
     return f"{line} || fail {shlex.quote(label)}"
 
 
 def _quote(value: str) -> str:
     return shlex.quote(value)
+
+
+GRUB_PBKDF2_ITERATIONS = 10000
+
+
+def grub_pbkdf2(password: str, salt: Optional[bytes] = None, iterations: int = GRUB_PBKDF2_ITERATIONS) -> str:
+    """The hash grub-mkpasswd-pbkdf2 prints: PBKDF2-HMAC-SHA512 with a 64-byte salt, in upper-case hex."""
+    salt = salt if salt is not None else secrets.token_bytes(64)
+    digest = hashlib.pbkdf2_hmac("sha512", password.encode("utf-8"), salt, iterations, 64)
+    return f"grub.pbkdf2.sha512.{iterations}.{salt.hex().upper()}.{digest.hex().upper()}"
 
 
 class DebianPreseedGenerator:
@@ -102,6 +114,31 @@ class DebianPreseedGenerator:
         if not plaintext:
             return "!"
         return sha512_crypt(plaintext, secrets.token_hex(8))
+
+    def _boot_menu_lock(self, username: str, password: str) -> List[str]:
+        """GRUB password: without it, anyone at the keyboard can edit the boot entry (for example
+        init=/bin/bash) and get a root shell. The normal entries stay unrestricted, so the computer
+        starts with no password; editing an entry, the GRUB command line, the "Advanced options"
+        menu and the firmware settings entry need the parent's name and password. Recovery mode
+        entries are not generated. The password lock is written only once the default entry has
+        been made unrestricted, so a change in Debian's 10_linux cannot stop the computer booting.
+        """
+        grub_user = _quote(f'set superusers="{username}"')
+        grub_password = _quote(f"password_pbkdf2 {username} {grub_pbkdf2(password)}")
+        return [
+            "# 8. Boot menu: the parent's password to edit entries or use the GRUB command line",
+            "mkdir -p $T/etc/default/grub.d",
+            "printf '%s\\n' 'GRUB_DISABLE_RECOVERY=\"true\"' > $T/etc/default/grub.d/family-linux.cfg",
+            "sed -i '/^CLASS=/ s/\"$/ --unrestricted\"/' $T/etc/grub.d/10_linux"
+            " && grep -q '^CLASS=.*--unrestricted' $T/etc/grub.d/10_linux"
+            f" && printf '%s\\n' '#!/bin/sh' 'cat <<EOF' {grub_user} {grub_password} 'EOF'"
+            " > $T/etc/grub.d/01_family-linux"
+            " && chmod 700 $T/etc/grub.d/01_family-linux",
+            "in-target update-grub",
+            # grub-mkconfig keeps grub.cfg private when it holds a password; make sure of it.
+            "chmod 600 $T/boot/grub/grub.cfg",
+            "",
+        ]
 
     def generate_preseed(
         self,
@@ -214,13 +251,15 @@ class DebianPreseedGenerator:
         out.append("chmod 0440 $T/etc/sudoers.d/family-linux-admin")
         out.append("")
 
-        out.append("# 2. Child accounts: standard users, nologin shell, no sudo, password hash only")
+        out.append("# 2. Child accounts: standard users, nologin shell, no sudo, password hash only. Locked until")
+        out.append("# the first boot has applied their web filter and desktop rules; the first boot unlocks them.")
         for child in self.policy.children:
             out.append(
                 "in-target useradd -m "
                 f"-s {_quote(child.shell)} -c {_quote(child.full_name)} -g family-children "
                 f"-p {_quote(self._hash_password(child.password))} {_quote(child.username)}"
             )
+            out.append(f"in-target usermod -L {_quote(child.username)}")
         out.append("")
 
         # 3. Firewall: applied by the first boot. ufw cannot run in the installer's chroot (all three
@@ -230,8 +269,10 @@ class DebianPreseedGenerator:
         out.append("# 4. Family Linux payload, policy (no passwords) and the first-boot unit")
         out.append("mkdir -p $T/opt $T/etc/family-linux $T/etc/systemd/system $T/usr/local/sbin $T/usr/local/bin")
         out.append("mkdir -p $T/usr/share/applications $T/usr/share/polkit-1/actions $T/usr/lib/python3/dist-packages")
-        out.append("cp -a $PAYLOAD $T/opt/")
-        out.append("install -m 644 $PAYLOAD/policy.yaml $T/etc/family-linux/policy.yaml")
+        # Only the program: this script holds the children's password hashes and must not be
+        # copied to the installed system, where every account can read /opt.
+        out.append("mkdir -p $T/opt/family-linux && cp -a $PAYLOAD/src $T/opt/family-linux/")
+        out.append("install -m 600 $PAYLOAD/policy.yaml $T/etc/family-linux/policy.yaml")
         out.append(f"install -m 644 $PAYLOAD/{FIRSTBOOT_UNIT} $T/etc/systemd/system/{FIRSTBOOT_UNIT}")
         out.append(f"in-target systemctl enable {FIRSTBOOT_UNIT}")
         out.append("printf '%s\\n' /opt/family-linux/src > $T/usr/lib/python3/dist-packages/family-linux.pth")
@@ -269,6 +310,9 @@ class DebianPreseedGenerator:
                    "'APT::Periodic::Unattended-Upgrade \"1\";' > $T/etc/apt/apt.conf.d/20auto-upgrades")
         out.append("in-target systemctl enable unattended-upgrades.service")
         out.append("")
+
+        if parent.password:
+            out.extend(self._boot_menu_lock(parent.username, parent.password))
         steps = [_with_failure_check(line) for line in out[1:]]
         ending = [
             'echo "failed=$FAILED" > "$T' + INSTALL_STATUS_PATH + '"',

@@ -101,9 +101,10 @@ sudo family-ctl web remove example.com --child kid
 
 ## Step 7: Understand the browser settings
 
-These settings apply to **every user on this computer**, including you:
+**SafeSearch** is on for your children in every browser. Search results from Google, Bing, DuckDuckGo and YouTube are filtered for explicit content. The children's web filter does this itself, so it works whichever DNS provider you use.
 
-- **SafeSearch** is on. Search results from Google, Bing, DuckDuckGo and YouTube are filtered for explicit content.
+The settings below apply to **every user on this computer**, including you. Web browsers read one settings file for the whole computer, so they cannot be set for one person only:
+
 - **Private (incognito) windows** are turned off.
 - **Developer tools** are turned off.
 - **Extra browser add-ons** cannot be installed.
@@ -112,7 +113,7 @@ Your child cannot change these settings, because they need your password to do s
 
 ## Step 8: Know which DNS provider is in use
 
-The DNS provider is the service that decides which sites your computer is allowed to reach. You choose it during installation. The options are:
+The DNS provider is the service that decides which sites your computer is allowed to reach. Each child uses the provider set for them; the default is CleanBrowsing Family. The options are:
 
 | Provider | What it does |
 |---|---|
@@ -135,6 +136,15 @@ sudo family-ctl verify
 ```
 
 Look for any line marked **FAIL** that mentions DNS or web. If you see one, ask for help before relying on the filter.
+
+## Keep the computer itself locked
+
+Family Linux protects your children's accounts. Someone sitting at the computer could still start it from a USB stick and get around everything. Two settings on the computer stop that:
+
+1. **Set a password for the computer's start-up settings** (called the BIOS or UEFI setup). How you get there depends on the make: usually a key such as F2, F10, F12 or Delete pressed straight after switching on. Look for "Supervisor password" or "Administrator password", and keep it somewhere safe.
+2. **Turn off starting from USB sticks and other disks** in the same settings, or put the computer's own disk first and lock the order with that password.
+
+Family Linux already asks for your name and password before anyone can change how Linux starts (the boot menu). That password is the parent password you chose when the computer was set up. If you change your password later, the boot menu keeps the original one.
 
 ## Things to expect
 
@@ -163,10 +173,10 @@ Family Linux also switches on its browser settings in these browsers: private an
 These are the browsers in Debian's own software, as found by a test on a Family Linux computer. A browser you install does not appear in your children's menus until you turn it on in Family Controls under Apps (Chromium and Chrome are already on for 10 and over).
 
 - **Chromium** works. Your child may see a message saying an extension could not be loaded when Chromium starts. It is harmless: Family Linux stops browsers from loading extensions for children. Close the message.
-- **Falkon** works, and the filter applies. Family Linux cannot switch on its browser settings in Falkon, so SafeSearch is not forced there. Use Chrome, Firefox or Chromium if that matters to you.
+- **Falkon** works, and the filter applies, including SafeSearch. Family Linux cannot switch on its other browser settings in Falkon (private windows, for example). Use Chrome, Firefox or Chromium if that matters to you.
 - **Konqueror** is installed with KDE but hidden from the menus by Debian.
 
-> **Please note: Falkon and Konqueror.** Family Linux cannot lock the settings in these two browsers. A child who knows how could set either one to send its traffic through a "proxy" (a go-between computer on the internet), and the websites they visit that way would not be checked by the filter. SafeSearch is not forced in them either. If you want the filter to cover everything, do not turn these two browsers on for your children in Family Controls. Use Chrome, Firefox or Chromium instead.
+> **Please note: Falkon and Konqueror.** Family Linux cannot lock the settings in these two browsers. A child who knows how could set either one to send its traffic through a "proxy" (a go-between computer on the internet), and the websites they visit that way would not be checked by the filter, and would not get SafeSearch. If you want the filter to cover everything, do not turn these two browsers on for your children in Family Controls. Use Chrome, Firefox or Chromium instead.
 - **GNOME Web (Epiphany)** and other small browsers built on the same engine (Luakit, surf, vimb) do not start for children. Their own safety sandbox clashes with Family Linux's. Nothing gets past the filter; the browser just closes. Use another browser.
 
 ### Installing Google Chrome

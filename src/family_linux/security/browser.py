@@ -1,7 +1,8 @@
 """Browser policy enforcement for Family Linux.
 
 Generates managed enterprise policies for Firefox and Chromium:
-- Enforces Google, Bing, DuckDuckGo, and YouTube SafeSearch
+- Enforces Google SafeSearch and YouTube Restricted Mode in Chromium-based browsers (every browser
+  also gets SafeSearch from the children's DNS gateway, see dns_gateway.safe_search_target)
 - Disables private/incognito browsing
 - Disables browser developer tools
 - Restricts extension installation
@@ -52,7 +53,6 @@ class BrowserPolicyManager:
             },
             "SearchSuggestEnabled": True,
             "Preferences": {
-                "browser.safesearch.enabled": web_filter.safe_search_enforced,
                 "browser.urlbar.suggest.searches": True,
                 "network.trr.mode": 5,  # Disable DoH to preserve local parent DNS filtering
                 # Encrypted Client Hello hides the site name the child's filter checks, so the

@@ -51,3 +51,16 @@ def test_audit_logger_filters(tmp_path: Path):
     warning_records = logger.get_records(filter_type="TIME_WARNING")
     assert len(warning_records) == 1
     assert warning_records[0].event_type == "TIME_WARNING"
+
+
+def test_audit_log_is_rotated_by_the_apply():
+    from family_linux.audit.logger import LOGROTATE_PATH, render_logrotate
+    from family_linux.provisioner.system import SystemProvisioner
+    from family_linux.security.adapter import SystemAdapter
+    from family_linux.models import FamilyPolicy, ParentAccount
+
+    adapter = SystemAdapter(dry_run=True)
+    SystemProvisioner(adapter=adapter).apply_policy(FamilyPolicy(parent=ParentAccount("parent", "Parent")), layers=["updates"])
+    text = adapter.simulated_files[str(LOGROTATE_PATH)]
+    assert text == render_logrotate()
+    assert "/var/log/family-linux/audit.log {" in text and "rotate 52" in text and "create 0600 root root" in text

@@ -39,6 +39,15 @@ profile family-linux-child flags=(attach_disconnected, mediate_deleted) {
   #include <abstractions/ssl_certs>
 
   dbus,
+  # Except the calls that start a program outside this profile: a unit or transient service in the
+  # user's systemd manager (what systemd-run --user does), and environment for programs the bus
+  # starts later (LD_PRELOAD, for example). Enforced by dbus-daemon where it mediates AppArmor.
+  deny dbus send bus=session path=/org/freedesktop/systemd1
+       interface=org.freedesktop.systemd1.Manager
+       member={StartUnit,StartUnitReplace,StartTransientUnit,RestartUnit,TryRestartUnit,ReloadOrRestartUnit,ReloadOrTryRestartUnit,EnqueueUnitJob,Reload,LinkUnitFiles,EnableUnitFiles,ReenableUnitFiles,PresetUnitFiles,SetEnvironment,UnsetAndSetEnvironment,SetUnitProperties},
+  deny dbus send bus=session path=/org/freedesktop/DBus
+       interface=org.freedesktop.DBus
+       member=UpdateActivationEnvironment,
   network inet stream,
   network inet6 stream,
   network inet dgram,
@@ -110,6 +119,13 @@ profile family-linux-child flags=(attach_disconnected, mediate_deleted) {
   deny /{,usr/}bin/{rbash,ksh,tcsh,csh} x,
   deny /{,usr/}bin/{gnome-terminal*,xterm,uxterm,konsole,kgx,xfce4-terminal,tilix,terminator,lxterminal,mate-terminal,rxvt*,st,alacritty,kitty,foot} x,
   deny /usr/libexec/gnome-terminal-* x,
+
+  # Deny interpreters run as commands: python3 -c, perl -e and the like are a shell in all but
+  # name (a LibreOffice macro could start one). Scripts that apps ship with a #! line still run.
+  deny /usr/bin/{python,python[0-9]*,perl,perl[0-9]*,ruby*,lua*,tclsh*,wish*,node,nodejs,php*,guile*,pwsh} x,
+  # Deny the tools that ask the user's service manager or the session bus to start a program,
+  # which would then run outside this profile.
+  deny /usr/bin/{systemd-run,systemctl,busctl,gdbus,dbus-send,qdbus*,dbus-update-activation-environment,kstart*} x,
 
   # Child home access, with file locks (Firefox locks its profile folder; without k it reported
   # that another copy was already running)

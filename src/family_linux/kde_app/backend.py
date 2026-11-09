@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
 
+from family_linux.models import CLOCK, approved_entries_matching
+
 PKEXEC = "/usr/bin/pkexec"
 FAMILY_CTL = "/usr/local/sbin/family-ctl"
 # pkexec exit codes
@@ -23,7 +25,6 @@ AUTH_DISMISSED = 126
 NOT_AUTHORISED = 127
 
 USERNAME = re.compile(r"^[a-z_][a-z0-9_-]{2,31}$")
-CLOCK = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 DOMAIN = re.compile(r"^(\*\.)?([a-z0-9-]+\.)*[a-z0-9-]+$")
 
 
@@ -61,8 +62,7 @@ def normalise_domain(value: str) -> Optional[str]:
 
 def approved_entries_for(app_id: str, approved: Sequence[str]) -> List[str]:
     """The approved-list entries that make this app visible, using AppGuard's matching rule."""
-    clean = app_id.lower().replace(".desktop", "")
-    return [a for a in approved if a.lower() in clean or clean in a.lower()]
+    return approved_entries_matching(app_id, list(approved))
 
 
 class FamilyCtlClient:

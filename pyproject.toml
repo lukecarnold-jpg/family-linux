@@ -7,7 +7,7 @@ name = "family-linux"
 version = "0.1.0"
 description = "Child-safe Linux experience that parents can manage simply, built on Debian stable with KDE Plasma."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Family Linux Contributors"}
@@ -27,7 +27,6 @@ dev = [
 family-installer = "family_linux.installer.wizard:main"
 family-ctl = "family_linux.cli.family_ctl:main"
 family-policyd = "family_linux.screentime.daemon:main"
-family-parent-dashboard = "family_linux.parent_ui.server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

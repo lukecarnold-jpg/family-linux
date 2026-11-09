@@ -9,11 +9,11 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime, time as dtime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Any
 
-from family_linux.models import ChildAccount, TimeLimitPolicy
+from family_linux.models import MINUTES_PER_DAY, ChildAccount
 
 DEFAULT_USAGE_FILE = Path("/var/lib/family-linux/screentime.json")
 
@@ -103,24 +103,27 @@ class ScreenTimeTracker:
             return True, "Limits disabled", 9999
 
         dt = now or datetime.now()
-        current_clock = dt.time()
+        minute = dt.hour * 60 + dt.minute
+        wake = _clock_minutes(policy.wake_time)
 
-        # Parse wake time
-        wake_h, wake_m = [int(p) for p in policy.wake_time.split(":")]
-        wake = dtime(wake_h, wake_m)
+        # Each evening has its own bedtime (Friday and Saturday nights use the weekend one). A
+        # bedtime at or before the wake time is after midnight, so it is counted into the next day.
+        def bedtime_for(evening: datetime) -> Tuple[str, int]:
+            text = policy.bedtime_weekend if evening.weekday() in (4, 5) else policy.bedtime_weekday
+            clock = _clock_minutes(text)
+            return text, clock + MINUTES_PER_DAY if clock <= wake else clock
 
-        # Parse bedtime based on weekday (Monday=0 ... Sunday=6)
-        is_weekend = dt.weekday() in (4, 5)  # Friday and Saturday nights
-        curfew_str = policy.bedtime_weekend if is_weekend else policy.bedtime_weekday
-        bed_h, bed_m = [int(p) for p in curfew_str.split(":")]
-        bed = dtime(bed_h, bed_m)
+        if minute < wake:
+            # Before the wake time, last evening's bedtime governs (it may not have arrived yet).
+            curfew_str, bed = bedtime_for(dt - timedelta(days=1))
+            bed -= MINUTES_PER_DAY
+        else:
+            curfew_str, bed = bedtime_for(dt)
 
-        # Check bedtime curfew
-        if current_clock >= bed or current_clock < wake:
+        if minute >= bed:
             return False, f"Curfew active ({curfew_str} to {policy.wake_time})", 0
 
-        # Calculate minutes until bedtime
-        minutes_to_bed = (bed_h * 60 + bed_m) - (current_clock.hour * 60 + current_clock.minute)
+        minutes_to_bed = bed - minute
 
         # Check daily quota
         used_today = self.get_minutes_used(child.username, dt)
@@ -130,8 +133,10 @@ class ScreenTimeTracker:
             return False, f"Daily limit reached ({policy.daily_limit_minutes} minutes)", 0
 
         # Effective remaining time is minimum of quota and curfew
-        effective_remaining = min(remaining_quota, max(0, minutes_to_bed))
-        if effective_remaining <= 0:
-            return False, f"Curfew reached ({curfew_str})", 0
-
+        effective_remaining = min(remaining_quota, minutes_to_bed)
         return True, "Within allowed hours and quota", effective_remaining
+
+
+def _clock_minutes(text: str) -> int:
+    hours, minutes = text.split(":")
+    return int(hours) * 60 + int(minutes)

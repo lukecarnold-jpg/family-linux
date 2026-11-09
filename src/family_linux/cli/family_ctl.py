@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import pwd
 import subprocess
 import sys
 from pathlib import Path
@@ -23,12 +24,14 @@ from family_linux.models import (
     AgeTier,
     DNSProvider,
     DEFAULT_APPROVED_APPS,
+    ALWAYS_BLOCKED_COMMANDS,
 )
 from family_linux.provisioner.system import (
     APP_LAYERS,
     CHILD_ADDED_LAYERS,
     CHILD_SIGN_IN_LAYERS,
     WEB_LAYERS,
+    ProvisioningError,
     SystemProvisioner,
 )
 from family_linux.screentime.tracker import ScreenTimeTracker
@@ -36,7 +39,13 @@ from family_linux.audit.logger import AuditLogger
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security.app_guard import AppGuard
 from family_linux.security.apparmor import PROFILE_PATH
-from family_linux.security.browser import BRAVE_POLICY_PATH, CHROMIUM_POLICY_PATH, FIREFOX_POLICY_PATH
+from family_linux.security.browser import (
+    BRAVE_POLICY_PATH,
+    CHROME_POLICY_PATH,
+    CHROMIUM_POLICY_PATH,
+    EDGE_POLICY_PATH,
+    FIREFOX_POLICY_PATH,
+)
 from family_linux.security.password_policy import PAM_PASSWD_PATH, block_in_place
 from family_linux.security.package_gate import PackageInstallGate
 from family_linux.security.desktop_lockdown import CHILD_KDEGLOBALS_PATH, SDDM_PAM_PATH, lockdown_in_place
@@ -45,7 +54,8 @@ from family_linux.security.dns_filter import NSSWITCH_PATH, lookups_use_dns
 from family_linux.provisioner.firstboot import INSTALL_FAILURES_PATH, installer_failures
 from family_linux.security.users import SUDOERS_FILE
 from family_linux.security.dns_gateway import clear_request, load_requests
-from family_linux.security.web_gateway import REQUESTS_PATH
+from family_linux.security.web_gateway import NFT_TABLE, REQUESTS_PATH, SERVICE_NAME as GATEWAY_SERVICE, rules_cover_children
+from family_linux.screentime.service import SERVICE_NAME as SCREENTIME_SERVICE
 
 
 def format_table(headers: List[str], rows: List[List[str]]) -> str:
@@ -73,6 +83,25 @@ def _probe(cmd: List[str]) -> Optional[subprocess.CompletedProcess]:
         return subprocess.run(cmd, capture_output=True, text=True)
     except FileNotFoundError:
         return None
+
+
+def web_rules_loaded(policy: FamilyPolicy) -> Tuple[bool, str]:
+    """Live check: the children's nftables table is loaded and has rules for every child account."""
+    listing = _probe(["nft", "list", "table", "inet", NFT_TABLE])
+    if listing is None:
+        return False, "nft not installed"
+    if listing.returncode != 0:
+        return False, f"table inet {NFT_TABLE} not loaded; children are not filtered"
+    uids = {}
+    for child in policy.children:
+        try:
+            uids[child.username] = pwd.getpwnam(child.username).pw_uid
+        except KeyError:
+            continue
+    missing = rules_cover_children(listing.stdout, uids)
+    if missing:
+        return False, f"no rules for: {', '.join(missing)}"
+    return True, f"table inet {NFT_TABLE} covers {len(uids)} child account(s)"
 
 
 class FamilyCtl:
@@ -107,7 +136,7 @@ class FamilyCtl:
         print(f"Sudo Access:          Reserved exclusively for '{policy.parent.username}'")
         print(f"Total Child Accounts: {len(policy.children)}")
         print(f"Firewall Baseline:    Default Incoming: {policy.security.firewall_default.upper()}")
-        print(f"Audit Logging:        {'ACTIVE' if policy.audit_logging else 'DISABLED'}")
+        print(f"Audit Logging:        ACTIVE ({self.audit.log_path})")
         print("=" * 60)
 
         if policy.children:
@@ -154,7 +183,11 @@ class FamilyCtl:
             if getattr(args, "password_stdin", False):
                 # Keeps the password out of the process list (used by the Family Controls app).
                 args.password = sys.stdin.readline().rstrip("\n")
-            if args.password is not None and len(args.password) < MIN_PASSWORD_LENGTH:
+            if not args.password:
+                # Without one the account exists but nobody can sign in to it.
+                print("[ERROR] A password is required (--password-stdin, or --password).", file=sys.stderr)
+                sys.exit(1)
+            if len(args.password) < MIN_PASSWORD_LENGTH:
                 print(f"[ERROR] Password must be at least {MIN_PASSWORD_LENGTH} characters.")
                 sys.exit(1)
             tier = args.tier or AgeTier.PRE_TEEN.value
@@ -195,14 +228,25 @@ class FamilyCtl:
             print(f"[OK] Child account '{args.username}' enabled.")
 
         elif args.user_action == "remove":
-            orig_len = len(policy.children)
-            policy.children = [c for c in policy.children if c.username != args.username]
-            if len(policy.children) == orig_len:
+            if not any(c.username == args.username for c in policy.children):
                 print(f"[ERROR] Child user '{args.username}' not found.")
                 sys.exit(1)
-            self.provisioner.users.delete_child(args.username)
-            self.config_manager.save_policy(policy, reason=f"Removed child {args.username}")
-            print(f"[OK] Child account '{args.username}' removed.")
+            users = self.provisioner.users
+            # Lock and sign out first: userdel fails while the child has processes running. If the
+            # account cannot be deleted it stays in the policy (still filtered, still limited) and locked.
+            users.disable_child(args.username)
+            users.end_sessions(args.username)
+            if not users.delete_child(args.username):
+                print(
+                    f"[ERROR] Could not delete the account '{args.username}'. It is locked and still has "
+                    "its web filter and limits; try again in a minute.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+            policy.children = [c for c in policy.children if c.username != args.username]
+            # Rewrite the rules that list children (web filter, PAM, polkit, desktop) without them.
+            self.provisioner.apply_policy(policy, reason=f"Removed child {args.username}", layers=CHILD_ADDED_LAYERS)
+            print(f"[OK] Child account '{args.username}' removed. Their home folder is kept in /home/{args.username}.")
 
     def cmd_app(self, args: argparse.Namespace) -> None:
         policy = self.config_manager.load_policy()
@@ -231,9 +275,15 @@ class FamilyCtl:
             if not child:
                 print(f"[ERROR] Child user '{args.username}' not found.")
                 sys.exit(1)
+            clean = args.app.lower().removesuffix(".desktop")
+            if clean in ALWAYS_BLOCKED_COMMANDS or clean in [b.lower() for b in child.app_policy.blocked_apps]:
+                # Terminals, shells, package tools and System Settings stay hidden whatever the list says.
+                print(f"[ERROR] '{args.app}' is always blocked for children and cannot be approved.", file=sys.stderr)
+                sys.exit(1)
             if args.app not in child.app_policy.approved_apps:
                 child.app_policy.approved_apps.append(args.app)
                 self.provisioner.apply_policy(policy, reason=f"Approved {args.app} for {child.username}", layers=APP_LAYERS)
+                self.audit.log("APP_APPROVED", user=child.username, severity="NOTICE", details={"app": args.app})
                 print(f"[OK] Approved application '{args.app}' for '{child.username}'.")
             else:
                 print(f"Application '{args.app}' is already approved for '{child.username}'.")
@@ -246,6 +296,7 @@ class FamilyCtl:
             if args.app in child.app_policy.approved_apps:
                 child.app_policy.approved_apps.remove(args.app)
                 self.provisioner.apply_policy(policy, reason=f"Revoked {args.app} for {child.username}", layers=APP_LAYERS)
+                self.audit.log("APP_REVOKED", user=child.username, severity="NOTICE", details={"app": args.app})
                 print(f"[OK] Revoked application '{args.app}' for '{child.username}'.")
             else:
                 print(f"Application '{args.app}' was not in the approved list for '{child.username}'.")
@@ -449,6 +500,11 @@ class FamilyCtl:
                 "Firefox managed policy installed",
                 "Chromium managed policy installed",
                 "Brave managed policy installed",
+                "Google Chrome managed policy installed",
+                "Microsoft Edge managed policy installed",
+                "Web filter service running (family-dnsd)",
+                "Children's web filter rules loaded (nftables)",
+                "Screen time service running (family-policyd)",
                 "AppArmor child profile loaded in enforce mode",
                 "Unattended security updates enabled",
                 "Parent password rules enforced by PAM",
@@ -478,8 +534,31 @@ class FamilyCtl:
             ufw_ok = bool(ufw and ufw.returncode == 0 and "Status: active" in ufw.stdout and "deny (incoming)" in ufw.stdout)
             record("UFW active with deny incoming", ufw_ok, "ufw status verbose" if ufw else "ufw not installed")
 
-            for label, path in (("Firefox", FIREFOX_POLICY_PATH), ("Chromium", CHROMIUM_POLICY_PATH), ("Brave", BRAVE_POLICY_PATH)):
+            for label, path in (
+                ("Firefox", FIREFOX_POLICY_PATH),
+                ("Chromium", CHROMIUM_POLICY_PATH),
+                ("Brave", BRAVE_POLICY_PATH),
+                ("Google Chrome", CHROME_POLICY_PATH),
+                ("Microsoft Edge", EDGE_POLICY_PATH),
+            ):
                 record(f"{label} managed policy installed", path.exists(), str(path))
+
+            # The protections that run as services: files on disk are not enough, they must be running.
+            for label, unit in (
+                ("Web filter service running (family-dnsd)", GATEWAY_SERVICE),
+                ("Screen time service running (family-policyd)", SCREENTIME_SERVICE),
+            ):
+                active = _probe(["systemctl", "is-active", unit])
+                if active is None:
+                    record(label, False, "systemctl not available")
+                else:
+                    state = active.stdout.strip() or "not running"
+                    record(label, state == "active", state)
+            if policy.children:
+                ok, note = web_rules_loaded(policy)
+                record("Children's web filter rules loaded (nftables)", ok, note)
+            else:
+                skip("Children's web filter rules loaded (nftables)", "no child accounts")
 
             # Loaded and enforcing, as reported by the kernel, not just present on disk.
             aa = _probe(["aa-status"])
@@ -681,26 +760,23 @@ def main() -> None:
         sys.exit(1)
 
     ctl = FamilyCtl(config_path=args.config, dry_run=args.dry_run)
-
-    if args.command == "status":
-        ctl.cmd_status()
-    elif args.command == "state":
-        ctl.cmd_state()
-    elif args.command == "verify":
-        ctl.cmd_verify()
-    elif args.command == "user":
-        ctl.cmd_user(args)
-    elif args.command == "app":
-        ctl.cmd_app(args)
-    elif args.command == "time":
-        ctl.cmd_time(args)
-    elif args.command == "web":
-        ctl.cmd_web(args)
-    elif args.command == "audit":
-        ctl.cmd_audit(args)
-    elif args.command == "backup":
-        ctl.cmd_backup(args)
-
+    commands = {
+        "status": lambda: ctl.cmd_status(),
+        "state": lambda: ctl.cmd_state(),
+        "verify": lambda: ctl.cmd_verify(),
+        "user": lambda: ctl.cmd_user(args),
+        "app": lambda: ctl.cmd_app(args),
+        "time": lambda: ctl.cmd_time(args),
+        "web": lambda: ctl.cmd_web(args),
+        "audit": lambda: ctl.cmd_audit(args),
+        "backup": lambda: ctl.cmd_backup(args),
+    }
+    try:
+        commands[args.command]()
+    except (ValueError, ProvisioningError) as exc:
+        # Invalid input or a failed apply: a plain message (Family Controls shows it), not a traceback.
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

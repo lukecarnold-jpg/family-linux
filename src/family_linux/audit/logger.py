@@ -14,6 +14,23 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 DEFAULT_AUDIT_LOG_PATH = Path("/var/log/family-linux/audit.log")
+LOGROTATE_PATH = Path("/etc/logrotate.d/family-linux")
+
+
+def render_logrotate() -> str:
+    """Weekly rotation of the audit log, a year kept, compressed."""
+    return (
+        "# Managed by Family Linux. Do not edit.\n"
+        f"{DEFAULT_AUDIT_LOG_PATH} {{\n"
+        "    weekly\n"
+        "    rotate 52\n"
+        "    compress\n"
+        "    delaycompress\n"
+        "    missingok\n"
+        "    notifempty\n"
+        "    create 0600 root root\n"
+        "}\n"
+    )
 
 
 @dataclass
