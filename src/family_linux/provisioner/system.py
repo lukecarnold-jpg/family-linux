@@ -23,19 +23,23 @@ from family_linux.security.app_guard import AppGuard
 from family_linux.security.desktop_lockdown import DesktopLockdown
 from family_linux.security.child_startup import ChildStartupLock
 from family_linux.security.web_gateway import WebGateway
+from family_linux.screentime.service import ScreenTimeService
 from family_linux.config import PolicyConfigManager
-from family_linux.audit.logger import AuditLogger
+from family_linux.audit.logger import LOGROTATE_PATH, AuditLogger, render_logrotate
 
 
 # The system layers, in the order a full apply runs them. A change made in Family Controls or
 # family-ctl re-applies only the layers it affects (see cli/family_ctl.py).
-ALL_LAYERS = ("timezone", "accounts", "firewall", "web", "browsers", "apparmor", "updates", "desktop", "apps")
+ALL_LAYERS = (
+    "timezone", "accounts", "firewall", "web", "browsers", "apparmor", "updates", "desktop", "apps", "screentime",
+)
 # A new child needs the accounts, the rules that name children (PAM, polkit, web filter, desktop
 # lockdown) and a menu. Turning sign-in on or off only locks or unlocks the account.
 CHILD_ADDED_LAYERS = ("accounts", "web", "desktop", "apps")
 CHILD_SIGN_IN_LAYERS = ("accounts",)
 APP_LAYERS = ("apps",)
 WEB_LAYERS = ("web",)
+STALE_PAYLOAD_FILES = (Path("/opt/family-linux/late-command.sh"), Path("/opt/family-linux/policy.yaml"))
 
 
 class ProvisioningError(RuntimeError):
@@ -98,6 +102,11 @@ class SystemProvisioner:
 
         try:
             self._apply_system_layers(policy, results, selected)
+            if "accounts" in selected:
+                for child in policy.children:
+                    if child.enabled:
+                        self.users.enable_child(child.username)
+                results["actions"].append("Child sign-in enabled now that their rules are in place")
         except Exception as exc:
             last = results["actions"][-1]
             raise ProvisioningError(
@@ -166,6 +175,12 @@ class SystemProvisioner:
                 )
             # Keep menus in step with installs and removals between full applies
             self._install_menu_refresh_units(results)
+        if "screentime" in layers:
+            # Daily limits, bedtimes and disabled accounts are enforced by this service.
+            warnings = ScreenTimeService(self.adapter).apply()
+            results["warnings"].extend(warnings)
+            if not warnings:
+                results["actions"].append("Screen time service (family-policyd) enabled and running")
 
     def _apply_timezone(self, policy: FamilyPolicy, results: Dict[str, Any]) -> None:
         # Curfews and bedtimes are evaluated in local time.
@@ -194,8 +209,14 @@ class SystemProvisioner:
             results["warnings"].append(warning)
         results["actions"].append("Software changes by child accounts require the parent's password on every attempt")
 
+        # Installs from earlier ISOs copied the installer script (children's password hashes) and
+        # the policy into /opt/family-linux, which every account can read.
+        self.adapter.run_command(["rm", "-f", *(str(path) for path in STALE_PAYLOAD_FILES)])
+
         for child in policy.children:
-            self.users.provision_child(child)
+            # Unlocked only after every layer has applied (see apply_policy), so a child cannot sign
+            # in before their web filter and desktop rules exist, or after an apply failed partway.
+            self.users.provision_child(child, unlock=False)
             results["actions"].append(f"Child account '{child.username}' provisioned (non-admin, home locked)")
 
     def _apply_web(self, policy: FamilyPolicy, results: Dict[str, Any]) -> None:
@@ -219,6 +240,9 @@ class SystemProvisioner:
         results["actions"].append(f"Per-child web filter applied to {len(policy.children)} child account(s)")
 
     def _apply_updates(self, policy: FamilyPolicy, results: Dict[str, Any]) -> None:
+        # The audit log grows for as long as the computer is used; logrotate keeps a year of it.
+        self.adapter.write_system_file(LOGROTATE_PATH, render_logrotate(), mode=0o644)
+        results["actions"].append("Audit log rotated weekly (a year kept)")
         # Security updates: the policy requires them, so enable unattended upgrades.
         if policy.security.regular_security_updates:
             if self.adapter.run_command(["dpkg", "-s", "unattended-upgrades"]).returncode != 0:

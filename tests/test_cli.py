@@ -156,3 +156,36 @@ def test_cli_web_requests_lists_pending(test_ctl: FamilyCtl, tmp_path, monkeypat
     test_ctl.cmd_web(argparse.Namespace(web_action="requests"))
     out = capsys.readouterr().out
     assert "tiktok.com" in out and "alice" in out
+
+
+def test_cli_remove_signs_out_deletes_and_reapplies_rules(test_ctl: FamilyCtl):
+    test_ctl.cmd_user(argparse.Namespace(user_action="remove", username="alice"))
+
+    cmds = test_ctl.adapter.executed_commands
+    lock = cmds.index(["usermod", "-L", "alice"])
+    stop = cmds.index(["loginctl", "terminate-user", "alice"])
+    delete = cmds.index(["userdel", "alice"])
+    assert lock < stop < delete
+    # The web filter is rewritten without the child, so no stale rule names their UID
+    assert any(c[:2] == ["nft", "-f"] for c in cmds[delete:])
+    assert not test_ctl.config_manager.load_policy().children
+
+
+def test_cli_remove_keeps_a_child_that_could_not_be_deleted(test_ctl: FamilyCtl, capsys):
+    # Before the fix, a failed userdel (the child still signed in) was ignored: the child left the
+    # policy, and the next web apply dropped their filter while the account still worked.
+    from family_linux.security.adapter import CommandResult
+
+    real_run = test_ctl.adapter.run_command
+
+    def run(cmd, check=False):
+        if cmd[0] == "userdel":
+            test_ctl.adapter.executed_commands.append(cmd)
+            return CommandResult(command=cmd, returncode=8, stdout="", stderr="user alice is currently used by process 42")
+        return real_run(cmd, check)
+
+    test_ctl.adapter.run_command = run
+    with pytest.raises(SystemExit):
+        test_ctl.cmd_user(argparse.Namespace(user_action="remove", username="alice"))
+    assert [c.username for c in test_ctl.config_manager.load_policy().children] == ["alice"]
+    assert "Could not delete" in capsys.readouterr().err

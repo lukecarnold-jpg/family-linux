@@ -68,8 +68,9 @@ def test_state_is_parsed_and_failures_raise():
 
 def test_revoking_an_app_removes_every_entry_that_shows_it():
     runner = FakeRunner()
-    FamilyCtlClient(runner, command=["x"]).revoke_app("kid", "firefox_firefox", ["firefox", "vlc"])
-    assert [c[0][1:] for c in runner.calls] == [["app", "revoke", "kid", "firefox"]]
+    # Turning off LibreOffice Writer removes "libreoffice", the entry that shows every LibreOffice program
+    FamilyCtlClient(runner, command=["x"]).revoke_app("kid", "libreoffice-writer", ["libreoffice", "vlc"])
+    assert [c[0][1:] for c in runner.calls] == [["app", "revoke", "kid", "libreoffice"]]
 
 
 def test_development_override_replaces_the_command(monkeypatch):

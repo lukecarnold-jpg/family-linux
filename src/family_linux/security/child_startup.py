@@ -7,7 +7,10 @@ The desktop session reads these from the child's home at sign-in:
 - ~/.config/plasma-workspace/env and .../shutdown: shell scripts Plasma sources or runs.
 - ~/.config/autostart and ~/.config/autostart-scripts: programs started at sign-in.
 - ~/.config/environment.d: environment for the systemd user manager.
-- ~/.config/systemd/user: systemd user units, which can run any command.
+- ~/.config/systemd/user and ~/.local/share/systemd/user: systemd user units, which can run any command.
+- ~/.local/share/dbus-1/services: session bus services, started by the bus outside AppArmor.
+- ~/.local/share/kio/servicemenus, ~/.local/share/plasma/plasmoids, ~/.local/share/kwin/scripts:
+  Dolphin actions, Plasma widgets and KWin scripts, which can run commands.
 
 A child who can write any of these can start a shell at sign-in, or unset XDG_CONFIG_DIRS and leave
 the Plasma kiosk restrictions behind (see desktop_lockdown.py). Each one is replaced by an empty,
@@ -15,12 +18,17 @@ root-owned file or folder with the immutable flag, so the child can neither edit
 delete it. Something already in the way is renamed aside (".<name>.family-linux-disabled"), never
 deleted. Every step opens names relative to a directory descriptor with O_NOFOLLOW, as in
 child_dirs.py, so a symlink never makes root write elsewhere.
+
+The flag does not stop a child renaming a folder they own that holds a locked one (~/.config/systemd,
+say) and making a new one. So SDDM also runs this module as root at every child sign-in, before the
+session starts (`--pam`, see desktop_lockdown.py), and refuses the sign-in if a lock cannot be made.
 """
 
 from __future__ import annotations
 
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -40,6 +48,14 @@ LOCKED_PATHS: Sequence[Tuple[Tuple[str, ...], str, str]] = (
     ((".config", "plasma-workspace"), "env", "dir"),
     ((".config", "plasma-workspace"), "shutdown", "dir"),
     ((".config", "systemd"), "user", "dir"),
+    # Also read from the data folder: user units, session bus services (started by the bus, so
+    # outside AppArmor), Dolphin service menus, and Plasma widgets and KWin scripts, which can run
+    # commands.
+    ((".local", "share", "systemd"), "user", "dir"),
+    ((".local", "share", "dbus-1"), "services", "dir"),
+    ((".local", "share", "kio"), "servicemenus", "dir"),
+    ((".local", "share", "plasma"), "plasmoids", "dir"),
+    ((".local", "share", "kwin"), "scripts", "dir"),
 )
 DISABLED_SUFFIX = ".family-linux-disabled"
 ROOT = (0, 0)
@@ -197,7 +213,11 @@ class ChildStartupLock:
 
 
 def startup_locked(home_root: Path, username: str) -> Tuple[bool, str]:
-    """Live check for verify: every path exists, is root-owned, and is not a link."""
+    """Live check for verify: every path exists, is root-owned, is not a link, and is immutable.
+
+    Root ownership alone is not enough: without the immutable flag a child can rename a root-owned
+    entry out of the way in a folder they own, and put their own in its place.
+    """
     for label in relative_paths():
         path = home_root / username / label
         try:
@@ -206,4 +226,39 @@ def startup_locked(home_root: Path, username: str) -> Tuple[bool, str]:
             return False, f"{path} missing"
         if stat.S_ISLNK(info.st_mode) or info.st_uid != 0:
             return False, f"{path} not root-owned"
-    return True, f"{len(LOCKED_PATHS)} paths root-owned"
+        try:
+            fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except OSError as exc:
+            return False, f"{path}: {exc.strerror}"
+        try:
+            immutable = child_dirs.is_immutable(fd)
+        finally:
+            os.close(fd)
+        if immutable is None:
+            return False, f"{path}: immutable flag cannot be read"
+        if not immutable:
+            return False, f"{path} not immutable"
+    return True, f"{len(LOCKED_PATHS)} paths root-owned and immutable"
+
+
+def pam_main(environ: Optional[dict] = None, home_root: Path = Path("/home")) -> int:
+    """Entry point for pam_exec at a child's sign-in. Returns the exit status (0 lets them in)."""
+    env = os.environ if environ is None else environ
+    username = env.get("PAM_USER", "")
+    if env.get("PAM_TYPE", "open_session") != "open_session":
+        return 0
+    owner = child_dirs.child_owner(username)
+    if not username or owner is None:
+        return 1
+    locked, problems = lock_startup_paths(home_root, username, owner)
+    if problems:
+        print(f"family-linux: sign-in files for {username} not locked: {'; '.join(problems)}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--pam"]:
+        sys.exit(pam_main())
+    print("usage: python3 -m family_linux.security.child_startup --pam  (run by pam_exec)", file=sys.stderr)
+    sys.exit(2)

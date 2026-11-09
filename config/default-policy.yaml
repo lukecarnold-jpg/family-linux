@@ -33,8 +33,6 @@ security:
   admin_escalation: sudo_for_parent_only
   apparmor: where_applicable
   firewall_default: deny_incoming
-  package_verification_required: true
-  trusted_repositories_only: true
   regular_security_updates: true
 
 desktop:

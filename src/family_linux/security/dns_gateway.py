@@ -19,6 +19,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import signal
 import socket
 import struct
 import subprocess
@@ -26,13 +28,16 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 BLOCK_IPV4 = b"\x00\x00\x00\x00"
 DNS_PORT = 53
 UDP_LIMIT = 4096
 TCP_TIMEOUT = 5.0
 UDP_TIMEOUT = 3.0
+
+# What a blocking resolver answers with; never added to a child's allow list.
+UNSPECIFIED_ADDRESSES = frozenset({"0.0.0.0", "::"})
 
 RCODE_FORMERR = 1
 RCODE_SERVFAIL = 2
@@ -130,6 +135,55 @@ def error_response(query: bytes, rcode: int) -> bytes:
     return _response_header(query, rcode, 0) + question
 
 
+# SafeSearch by DNS: the search engines' own addresses for their filtered service. Answered for the
+# usual name, so the browser shows the normal address bar and only filtered results come back. It
+# works in every browser and with every DNS provider (Firefox and Falkon have no SafeSearch policy).
+SAFE_SEARCH_TARGETS = {
+    "www.bing.com": "strict.bing.com",
+    "duckduckgo.com": "safe.duckduckgo.com",
+    "www.duckduckgo.com": "safe.duckduckgo.com",
+    "www.youtube.com": "restrict.youtube.com",
+    "m.youtube.com": "restrict.youtube.com",
+    "youtubei.googleapis.com": "restrict.youtube.com",
+    "youtube.googleapis.com": "restrict.youtube.com",
+    "www.youtube-nocookie.com": "restrict.youtube.com",
+}
+GOOGLE_SEARCH = re.compile(r"^www\.google\.(com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})$")
+QTYPE_A = 1
+QTYPE_AAAA = 28
+
+
+def safe_search_target(name: str) -> Optional[str]:
+    """The filtered service to answer with for a search engine's name, or None."""
+    name = normalise(name)
+    if GOOGLE_SEARCH.match(name):
+        return "forcesafesearch.google.com"
+    return SAFE_SEARCH_TARGETS.get(name)
+
+
+def build_query(name: str, qtype: int, txid: int = 0) -> bytes:
+    labels = b"".join(bytes([len(part)]) + part.encode("ascii") for part in normalise(name).split("."))
+    return struct.pack("!HHHHHH", txid, 0x0100, 1, 0, 0, 0) + labels + b"\x00" + struct.pack("!HH", qtype, 1)
+
+
+def address_response(query: bytes, addresses: List[Tuple[str, int]]) -> bytes:
+    """An answer to the query (A or AAAA) with the given addresses, under the name asked for."""
+    _, qtype, end = parse_question(query)
+    question = query[12:end]
+    records = b""
+    count = 0
+    for address, ttl in addresses:
+        if qtype == QTYPE_A and ":" not in address:
+            rdata = socket.inet_pton(socket.AF_INET, address)
+        elif qtype == QTYPE_AAAA and ":" in address:
+            rdata = socket.inet_pton(socket.AF_INET6, address)
+        else:
+            continue
+        records += b"\xc0\x0c" + struct.pack("!HHIH", qtype, 1, int(ttl), len(rdata)) + rdata
+        count += 1
+    return _response_header(query, 0, count) + question + records
+
+
 def _udp_forward(query: bytes, upstream: str) -> Optional[bytes]:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.settimeout(UDP_TIMEOUT)
@@ -168,6 +222,10 @@ def forward_dns(query: bytes, upstream: str, tcp: bool) -> Optional[bytes]:
     return _tcp_forward(query, upstream) if tcp else _udp_forward(query, upstream)
 
 
+def _as_list(value: Union[str, Sequence[str]]) -> List[str]:
+    return [value] if isinstance(value, str) else [v for v in value if v]
+
+
 class RequestLog:
     """Blocked and unresolved lookups per child, kept in memory and flushed to a JSON file."""
 
@@ -197,11 +255,27 @@ class RequestLog:
                     existing["count"] = int(existing["count"]) + int(entry["count"])
                     existing["last_seen"] = entry["last_seen"]
                     existing["reason"] = entry["reason"]
+                # Bounded: only the most recent requests per child are kept.
+                if len(bucket) > MAX_REQUESTS_PER_CHILD:
+                    newest = sorted(bucket.items(), key=lambda item: str(item[1].get("last_seen", "")), reverse=True)
+                    merged[child] = dict(newest[:MAX_REQUESTS_PER_CHILD])
             self._pending.clear()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.path.with_name(self.path.name + ".tmp")
-        tmp.write_text(json.dumps(merged, indent=2), encoding="utf-8")
-        os.replace(tmp, self.path)
+        _write_private(self.path, merged)
+
+
+MAX_REQUESTS_PER_CHILD = 200
+
+
+def _write_private(path: Path, data: dict) -> None:
+    """Writes the request file readable by root only: it lists every child's blocked sites."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(data, indent=2))
+    os.chmod(tmp, 0o600)  # an older file left at the temporary name keeps its mode otherwise
+    os.replace(tmp, path)
 
 
 def load_requests(path: Path) -> Dict[str, Dict[str, Dict[str, object]]]:
@@ -216,8 +290,7 @@ def clear_request(path: Path, child: str, name: str) -> None:
     requests = load_requests(path)
     if name in requests.get(child, {}):
         del requests[child][name]
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_text(json.dumps(requests, indent=2), encoding="utf-8")
+        _write_private(Path(path), requests)
 
 
 def _skip_name(packet: bytes, pos: int) -> int:
@@ -343,27 +416,35 @@ class AddressAllowList:
     defined by web_gateway.render_nft; this only adds and refreshes elements.
     """
 
-    def __init__(self, uid: int, runner: Optional[Callable[[List[str]], int]] = None):
+    def __init__(self, uid: int, runner: Optional[Callable[[str], int]] = None):
         self.uid = uid
         self.v4, self.v6 = allow_set_names(uid)
-        self._run = runner or _run_nft
+        self._run = runner or _run_nft_script
 
     def add(self, entries: List[Tuple[str, int]]) -> int:
-        """Allows each address. Returns how many were added."""
-        added = 0
+        """Allows each address, in one nft transaction. Returns how many were added.
+
+        It used to run nft twice per address (delete, then add): slow for every lookup, and a
+        connection made between the two was refused. Now one batch adds each address (a no-op if
+        it is there), deletes it and adds it again with the new timeout. nft applies a batch as one
+        transaction, so the address is never missing in between.
+        """
+        lines = []
+        count = 0
         for address, ttl in entries[:MAX_ADDRESSES_PER_ANSWER]:
             family_set = self.v6 if ":" in address else self.v4
             seconds = min(max(int(ttl), MIN_ALLOW_SECONDS), MAX_ALLOW_SECONDS)
-            # Delete first so the timeout is refreshed; both commands may report "no such element".
-            self._run(["delete", "element", "inet", NFT_TABLE_NAME, family_set, "{", address, "}"])
-            if self._run(["add", "element", "inet", NFT_TABLE_NAME, family_set, "{", f"{address} timeout {seconds}s", "}"]) == 0:
-                added += 1
-        return added
+            element = f"add element inet {NFT_TABLE_NAME} {family_set} {{ {address} timeout {seconds}s }}"
+            lines += [element, f"delete element inet {NFT_TABLE_NAME} {family_set} {{ {address} }}", element]
+            count += 1
+        if not lines:
+            return 0
+        return count if self._run("\n".join(lines) + "\n") == 0 else 0
 
 
-def _run_nft(args: List[str]) -> int:
+def _run_nft_script(script: str) -> int:
     try:
-        return subprocess.run(["nft", *args], capture_output=True, text=True).returncode
+        return subprocess.run(["nft", "-f", "-"], input=script, capture_output=True, text=True).returncode
     except OSError:
         return 127
 
@@ -375,8 +456,8 @@ class ChildResolver:
         self,
         username: str,
         rules: DomainRules,
-        family_upstream: str,
-        general_upstream: str,
+        family_upstream: Union[str, Sequence[str]],
+        general_upstream: Union[str, Sequence[str]],
         log: RequestLog,
         forward: Forwarder = forward_dns,
         allow_list: Optional[AddressAllowList] = None,
@@ -384,11 +465,13 @@ class ChildResolver:
         learned_names=None,
         learned_ech=None,
         learned_name_addresses=None,
+        safe_search: bool = False,
     ):
         self.username = username
         self.rules = rules
-        self.family_upstream = family_upstream
-        self.general_upstream = general_upstream
+        self.safe_search = safe_search
+        self.family_upstreams = _as_list(family_upstream)
+        self.general_upstreams = _as_list(general_upstream)
         self.log = log
         self.forward = forward
         self.allow_list = allow_list
@@ -400,9 +483,18 @@ class ChildResolver:
         # Each name's addresses, so the proxy can try another when one cannot be reached.
         self.learned_name_addresses = learned_name_addresses
 
+    def _forward_any(self, query: bytes, upstreams: List[str], tcp: bool) -> Optional[bytes]:
+        """The first answer from the upstreams, in order. The second server of the provider is
+        tried when the first does not answer (a lost UDP packet used to fail the lookup)."""
+        for upstream in upstreams:
+            reply = self.forward(query, upstream, tcp)
+            if reply is not None:
+                return reply
+        return None
+
     def answer(self, query: bytes, tcp: bool = False) -> bytes:
         try:
-            name, _, _ = parse_question(query)
+            name, qtype, _ = parse_question(query)
         except ValueError:
             return error_response(query, RCODE_FORMERR)
 
@@ -411,16 +503,31 @@ class ChildResolver:
             self.log.record(self.username, name, "blocked by parent rule")
             return block_response(query)
 
-        upstream = self.general_upstream if decision == "allow" else self.family_upstream
-        reply = self.forward(query, upstream, tcp)
+        upstreams = self.general_upstreams if decision == "allow" else self.family_upstreams
+        target = safe_search_target(name) if self.safe_search else None
+        if target is not None:
+            # The search engine's filtered service, under the name asked for. Other record types
+            # (HTTPS, for example, which can carry the unfiltered addresses) get an empty answer.
+            reply = None
+            if qtype in (QTYPE_A, QTYPE_AAAA):
+                reply = self._forward_any(build_query(target, qtype, struct.unpack("!H", query[:2])[0]), upstreams, tcp)
+                if reply is None:
+                    return error_response(query, RCODE_SERVFAIL)
+            reply = address_response(query, parse_answer_addresses(reply) if reply else [])
+        else:
+            reply = self._forward_any(query, upstreams, tcp)
         if reply is None:
             return error_response(query, RCODE_SERVFAIL)
 
-        if decision == "default" and len(reply) >= 4 and (reply[3] & 0x0F) == RCODE_NXDOMAIN:
-            self.log.record(self.username, name, "not resolved by family filter")
+        addresses = [(a, ttl) for a, ttl in parse_answer_addresses(reply) if a not in UNSPECIFIED_ADDRESSES]
+        if decision == "default" and len(reply) >= 4:
+            if (reply[3] & 0x0F) == RCODE_NXDOMAIN:
+                self.log.record(self.username, name, "not resolved by family filter")
+            elif not addresses and parse_answer_addresses(reply):
+                # Some family services block by answering 0.0.0.0 rather than "no such name".
+                self.log.record(self.username, name, "blocked by family filter")
         # Only answers the parent allowed (directly or by default) reach this point, so only their
-        # addresses and names become reachable. Blocked answers never do.
-        addresses = parse_answer_addresses(reply)
+        # addresses and names become reachable. Blocked answers never do, and neither does 0.0.0.0.
         if addresses:
             if self.allow_list is not None:
                 self.allow_list.add(addresses)
@@ -490,13 +597,38 @@ def load_config(path: Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def run(config: dict) -> None:
+def reload_rules(config_path: Path, by_name: Dict[str, tuple]) -> int:
+    """Applies the block and allow lists from the configuration file to the running resolvers.
+    Children added or removed need a restart (their ports change); web_gateway.py does that."""
+    try:
+        config = load_config(config_path)
+    except (OSError, ValueError) as exc:
+        print(f"[Family Linux] reload failed, rules unchanged: {exc}", file=sys.stderr, flush=True)
+        return 0
+    updated = 0
+    for child in config.get("children", []):
+        entry = by_name.get(child.get("username"))
+        if entry is None:
+            continue
+        rules = DomainRules(child.get("blocked", []), child.get("allowed", []))
+        resolver, ctx = entry
+        resolver.rules = rules
+        resolver.safe_search = bool(child.get("safe_search", False))
+        if ctx is not None:
+            ctx.rules = rules
+        updated += 1
+    print(f"[Family Linux] rules reloaded for {updated} child account(s)", flush=True)
+    return updated
+
+
+def run(config: dict, config_path: Optional[Path] = None) -> None:
     """Starts DNS and HTTP(S) name-check listeners per child, plus the periodic request flush."""
     from family_linux.security import tls_proxy  # imported here: tls_proxy depends on this module
 
     log = RequestLog(Path(config["requests_path"]))
     host = config.get("listen_address", "127.0.0.1")
     threads = []
+    by_name: Dict[str, tuple] = {}
     for child in config["children"]:
         rules = DomainRules(child.get("blocked", []), child.get("allowed", []))
         learned_addresses = tls_proxy.LearnedAddresses()
@@ -506,14 +638,15 @@ def run(config: dict) -> None:
         resolver = ChildResolver(
             username=child["username"],
             rules=rules,
-            family_upstream=config["family_upstream"],
-            general_upstream=config["general_upstream"],
+            family_upstream=child.get("family_upstreams") or config.get("family_upstreams") or config["family_upstream"],
+            general_upstream=config.get("general_upstreams") or config["general_upstream"],
             log=log,
             allow_list=AddressAllowList(child["uid"]) if child.get("uid") is not None else None,
             learned_addresses=learned_addresses,
             learned_names=learned_names,
             learned_ech=learned_ech,
             learned_name_addresses=name_addresses,
+            safe_search=bool(child.get("safe_search", False)),
         )
         ctx = None
         if child.get("tls_port") is not None:
@@ -526,6 +659,7 @@ def run(config: dict) -> None:
                 name_addresses=name_addresses,
                 log=log,
             )
+        by_name[child["username"]] = (resolver, ctx)
         # Redirected IPv6 traffic lands on ::1, so every service listens on both loopbacks.
         for family, address in ((socket.AF_INET, host), (socket.AF_INET6, "::1")):
             for target, port, args in (
@@ -539,6 +673,10 @@ def run(config: dict) -> None:
                 thread.start()
                 threads.append(thread)
 
+    if config_path is not None:
+        # systemctl reload: new website rules take effect without a restart, so children keep the
+        # addresses and names they have already looked up (a restart cleared them for everyone).
+        signal.signal(signal.SIGHUP, lambda *_: reload_rules(config_path, by_name))
     print(f"[Family Linux] DNS gateway serving {len(config['children'])} child account(s)", flush=True)
     interval = float(config.get("flush_seconds", 30))
     try:
@@ -553,7 +691,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="Family Linux per-child DNS gateway")
     parser.add_argument("--config", type=Path, required=True, help="Gateway configuration JSON")
     args = parser.parse_args(argv)
-    run(load_config(args.config))
+    run(load_config(args.config), config_path=args.config)
 
 
 if __name__ == "__main__":

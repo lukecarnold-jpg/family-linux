@@ -18,6 +18,8 @@ from family_linux.timezones import is_valid_timezone
 
 MIN_PASSWORD_LENGTH = 8  # child accounts
 MIN_PARENT_PASSWORD_LENGTH = 14
+CLOCK = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")  # 24-hour HH:MM
+MINUTES_PER_DAY = 24 * 60
 
 
 def parent_password_problems(password: Optional[str]) -> List[str]:
@@ -64,8 +66,8 @@ DNS_SERVERS: Dict[str, List[str]] = {
     DNSProvider.OPENDNS_FAMILY.value: ["208.67.222.123", "208.67.220.123"],
 }
 
-# Desktop entry ids (or command names) for the apps each age preset shows. Matching is by substring,
-# so "firefox" also matches firefox-esr.
+# Desktop entry ids for the apps each age preset shows. Matching is exact, apart from the families
+# in APP_FAMILIES (see approved_entries_matching).
 DEFAULT_APPROVED_APPS: Dict[str, List[str]] = {
     AgeTier.YOUNG_CHILD.value: [
         "tuxpaint",
@@ -155,6 +157,22 @@ class TimeLimitPolicy:
     wake_time: str = "07:00"
     warning_minutes: List[int] = field(default_factory=lambda: [15, 5, 1])
 
+    def validate(self, username: str) -> List[str]:
+        """The screen time service reads these every minute, so a bad value must not be saved."""
+        errors = []
+        for label, value in (
+            ("weekday bedtime", self.bedtime_weekday),
+            ("weekend bedtime", self.bedtime_weekend),
+            ("wake time", self.wake_time),
+        ):
+            if not isinstance(value, str) or not CLOCK.match(value):
+                errors.append(f"Child '{username}': {label} '{value}' must be a 24-hour time such as 20:30.")
+        if not isinstance(self.daily_limit_minutes, int) or not 0 <= self.daily_limit_minutes <= MINUTES_PER_DAY:
+            errors.append(f"Child '{username}': daily limit must be between 0 and {MINUTES_PER_DAY} minutes.")
+        if not all(isinstance(m, int) and 0 < m <= MINUTES_PER_DAY for m in self.warning_minutes):
+            errors.append(f"Child '{username}': warning times must be whole minutes between 1 and {MINUTES_PER_DAY}.")
+        return errors
+
     @classmethod
     def for_tier(cls, tier: AgeTier | str) -> TimeLimitPolicy:
         tier_str = tier.value if isinstance(tier, AgeTier) else tier
@@ -169,7 +187,6 @@ class TimeLimitPolicy:
 
 @dataclass
 class WebFilterPolicy:
-    enabled: bool = True
     dns_provider: str = DNSProvider.CLEANBROWSING_FAMILY.value
     safe_search_enforced: bool = True
     block_incognito: bool = True
@@ -193,13 +210,35 @@ class WebFilterPolicy:
     ])
 
 
+# Approved entries that stand for a family of desktop entries. Debian ships LibreOffice as one entry
+# per program (libreoffice-writer, libreoffice-calc, ...), so "libreoffice" approves all of them.
+APP_FAMILIES: Dict[str, str] = {"libreoffice": "libreoffice-"}
+
+
+def approved_entries_matching(app_id: str, approved: List[str]) -> List[str]:
+    """The approved-list entries that make a desktop entry visible to a child.
+
+    The match is exact (case-insensitive), apart from the families above. It used to be a substring
+    match both ways, so approving "chromium" also showed the game "chromium-bsu", and approving
+    "google-chrome" showed "google-chrome-beta".
+    """
+    clean = app_id.rsplit("/", 1)[-1].lower()
+    if clean.endswith(".desktop"):
+        clean = clean[: -len(".desktop")]
+    matches = []
+    for entry in approved:
+        name = entry.lower()
+        family = APP_FAMILIES.get(name)
+        if clean == name or (family is not None and clean.startswith(family)):
+            matches.append(entry)
+    return matches
+
+
 @dataclass
 class AppPolicy:
     allow_list_mode: bool = True
     approved_apps: List[str] = field(default_factory=lambda: list(DEFAULT_APPROVED_APPS[AgeTier.PRE_TEEN.value]))
     blocked_apps: List[str] = field(default_factory=lambda: list(ALWAYS_BLOCKED_COMMANDS))
-    terminal_access: bool = False
-    package_management: bool = False
 
     @classmethod
     def for_tier(cls, tier: AgeTier | str) -> AppPolicy:
@@ -209,8 +248,6 @@ class AppPolicy:
             allow_list_mode=True,
             approved_apps=list(apps),
             blocked_apps=list(ALWAYS_BLOCKED_COMMANDS),
-            terminal_access=False,
-            package_management=False,
         )
 
 
@@ -260,6 +297,7 @@ class ChildAccount:
             errors.append(f"Violation of Family Linux security baseline: child '{self.username}' cannot have sudo access.")
         if self.role != "standard_user":
             errors.append(f"Violation: child '{self.username}' role must be 'standard_user'.")
+        errors.extend(self.time_limits.validate(self.username))
         return errors
 
     @classmethod
@@ -285,13 +323,7 @@ class SecurityPolicy:
     firewall_default: str = "deny_incoming"
     firewall_outgoing: str = "allow"
     firewall_blocked_ports: List[int] = field(default_factory=lambda: [23, 135, 137, 138, 139, 445])
-    package_verification_required: bool = True
-    trusted_repositories_only: bool = True
     regular_security_updates: bool = True
-    private_home_directories: bool = True
-    umask_default: str = "027"
-    disable_guest_account: bool = True
-    restrict_su_sudo_to_parent: bool = True
 
 
 @dataclass
@@ -300,8 +332,6 @@ class FamilyPolicy:
     children: List[ChildAccount] = field(default_factory=list)
     security: SecurityPolicy = field(default_factory=SecurityPolicy)
     version: str = "1.0"
-    audit_logging: bool = True
-    recovery_mode: bool = True
     # IANA name, e.g. "Australia/Sydney". Curfews use local time; None leaves the system setting alone.
     timezone: Optional[str] = None
 
@@ -358,7 +388,6 @@ class FamilyPolicy:
                 warning_minutes=time_raw.get("warning_minutes", [15, 5, 1]),
             )
             web_policy = WebFilterPolicy(
-                enabled=web_raw.get("enabled", True),
                 dns_provider=web_raw.get("dns_provider", DNSProvider.CLEANBROWSING_FAMILY.value),
                 safe_search_enforced=web_raw.get("safe_search_enforced", True),
                 block_incognito=web_raw.get("block_incognito", True),
@@ -371,8 +400,6 @@ class FamilyPolicy:
                 allow_list_mode=app_raw.get("allow_list_mode", True),
                 approved_apps=app_raw.get("approved_apps", []),
                 blocked_apps=app_raw.get("blocked_apps", []),
-                terminal_access=app_raw.get("terminal_access", False),
-                package_management=app_raw.get("package_management", False),
             )
 
             children.append(ChildAccount(
@@ -398,13 +425,7 @@ class FamilyPolicy:
             firewall_default=sec_raw.get("firewall_default", "deny_incoming"),
             firewall_outgoing=sec_raw.get("firewall_outgoing", "allow"),
             firewall_blocked_ports=sec_raw.get("firewall_blocked_ports", [23, 135, 137, 138, 139, 445]),
-            package_verification_required=sec_raw.get("package_verification_required", True),
-            trusted_repositories_only=sec_raw.get("trusted_repositories_only", True),
             regular_security_updates=sec_raw.get("regular_security_updates", True),
-            private_home_directories=sec_raw.get("private_home_directories", True),
-            umask_default=sec_raw.get("umask_default", "027"),
-            disable_guest_account=sec_raw.get("disable_guest_account", True),
-            restrict_su_sudo_to_parent=sec_raw.get("restrict_su_sudo_to_parent", True),
         )
 
         return cls(
@@ -412,7 +433,5 @@ class FamilyPolicy:
             children=children,
             security=security,
             version=data.get("version", "1.0"),
-            audit_logging=data.get("audit_logging", True),
-            recovery_mode=data.get("recovery_mode", True),
             timezone=data.get("timezone"),
         )

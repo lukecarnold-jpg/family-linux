@@ -26,13 +26,14 @@ set -euo pipefail
 # Optional: MODE=interactive (default) or MODE=automated.
 # Optional: APPLIANCE=1 (set by build-virtualbox-vm.sh): the first boot powers off when it has finished.
 # Optional: DEBIAN_BASE_URL (default https://cdimage.debian.org/debian-cd/current/<arch>/iso-cd).
+# Optional: OUTPUT_DIR (default dist/): where the ISO is written, for a test build beside your own.
 # Requires: xorriso, curl, rsync, gpgv (brew install gnupg | apt install gpgv), PARENT_PASS, and a
 # Python with PyYAML (PYTHON=... to choose one).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${PROJECT_ROOT}/build"
-OUTPUT_DIR="${PROJECT_ROOT}/dist"
+OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/dist}"
 
 case "$(uname -m)" in
     arm64|aarch64) DEFAULT_ARCH=arm64 ;;

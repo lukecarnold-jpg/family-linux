@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 120
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Allow the runner to use KVM
         run: |
@@ -76,6 +76,8 @@ jobs:
           test "$result" = complete
           # An installer step that failed is a failure here, even though the first boot carried on.
           if tr -cd '[:print:]\n' < serial.log | grep -aq "installer step failed"; then exit 1; fi
+          # The services that enforce the rules must have started on the installed system.
+          if tr -cd '[:print:]\n' < serial.log | grep -aqE "family-(policyd|dnsd) could not start"; then exit 1; fi
 
       - name: Serial log (last 200 lines)
         if: always()

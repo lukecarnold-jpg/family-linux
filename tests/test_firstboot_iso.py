@@ -84,12 +84,57 @@ def test_wallpaper_autostart_runs_the_script_at_login():
     assert "Exec=/usr/libexec/family-linux/family-linux-set-wallpaper" in text
 
 
-def test_gateway_reloads_the_child_rules_on_every_start():
+def test_child_rules_load_at_every_boot_without_the_gateway():
     # nftables rules do not survive a reboot; found when a VirtualBox VM rebooted with no child rules.
-    from family_linux.security.web_gateway import NFT_RULES_PATH, render_service
-    unit = render_service("/usr/bin/python3")
-    assert f"ExecStartPre=/usr/sbin/nft -f {NFT_RULES_PATH}" in unit
-    assert unit.index("ExecStartPre=") < unit.index("ExecStart=/usr/bin/python3")
+    # They were loaded by the gateway's ExecStartPre, so a gateway that failed to start left no
+    # rules at all (children unfiltered). They now have their own early unit.
+    from family_linux.security.web_gateway import NFT_RULES_PATH, render_rules_service, render_service
+    rules = render_rules_service()
+    assert f"ExecStart=/usr/sbin/nft -f {NFT_RULES_PATH}" in rules
+    assert "Before=network-pre.target family-dnsd.service" in rules
+    assert "WantedBy=sysinit.target" in rules
+    gateway = render_service("/usr/bin/python3")
+    assert "ExecStartPre" not in gateway
+    assert "Wants=family-web-rules.service" in gateway
+
+
+def test_firstboot_runs_before_the_sign_in_screen():
+    assert "Before=display-manager.service" in _unit_text()
+
+
+def test_installer_creates_children_locked():
+    from family_linux.provisioner.preseed import DebianPreseedGenerator
+    script = DebianPreseedGenerator(_policy()).generate_late_script()
+    assert script.index("useradd") < script.index("in-target usermod -L kid ")
+
+
+def test_children_are_unlocked_only_after_every_layer_applied():
+    from family_linux.security.adapter import SystemAdapter
+    from family_linux.provisioner.system import SystemProvisioner
+
+    adapter = SystemAdapter(dry_run=True)
+    SystemProvisioner(adapter=adapter).apply_policy(_policy())
+    cmds = adapter.executed_commands
+    unlock = cmds.index(["usermod", "-U", "kid"])
+    # The new account is kept locked after its password is set, and unlocked after the web filter
+    # and the screen time service are in place.
+    assert ["usermod", "-L", "kid"] in cmds[:unlock]
+    assert unlock > cmds.index(["systemctl", "enable", "--now", "family-dnsd"])
+    assert unlock > cmds.index(["systemctl", "enable", "--now", "family-policyd"])
+    assert cmds.count(["usermod", "-U", "kid"]) == 1
+
+
+def test_a_failed_apply_leaves_a_new_child_locked(monkeypatch):
+    import pytest
+    from family_linux.security.adapter import SystemAdapter
+    from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
+
+    adapter = SystemAdapter(dry_run=True)
+    provisioner = SystemProvisioner(adapter=adapter)
+    monkeypatch.setattr(provisioner.web_gateway, "apply", lambda policy: (_ for _ in ()).throw(RuntimeError("nft broke")))
+    with pytest.raises(ProvisioningError):
+        provisioner.apply_policy(_policy())
+    assert ["usermod", "-U", "kid"] not in adapter.executed_commands
 
 
 def test_firstboot_reports_installer_steps_that_failed(tmp_path, capsys):
@@ -141,3 +186,43 @@ def test_appliance_drops_the_build_serial_console_from_the_kernel_line():
     assert 'GRUB_CMDLINE_LINUX=""' in out and 'GRUB_CMDLINE_LINUX_DEFAULT="quiet"' in out
     assert "console=ttyS0" not in firstboot.without_serial_console('GRUB_CMDLINE_LINUX="splash console=ttyS0"\n')
     assert firstboot.without_serial_console(out) == out
+
+
+def test_apply_removes_the_installer_script_left_in_opt_by_older_isos():
+    from family_linux.security.adapter import SystemAdapter
+    from family_linux.provisioner.system import SystemProvisioner
+
+    adapter = SystemAdapter(dry_run=True)
+    SystemProvisioner(adapter=adapter).apply_policy(_policy())
+    assert ["rm", "-f", "/opt/family-linux/late-command.sh", "/opt/family-linux/policy.yaml"] in adapter.executed_commands
+
+
+def test_every_unit_in_config_is_installed_by_the_iso():
+    # family-policyd.service sat in config/systemd with nothing installing it, so screen time was
+    # never enforced on an installed system. Each file there must be copied by the ISO build and
+    # installed by the late command; units written by the apply live in Python, not here.
+    root = Path(__file__).resolve().parents[1]
+    build = (root / "scripts" / "build-debian-iso.sh").read_text()
+    from family_linux.provisioner.preseed import DebianPreseedGenerator
+    late = DebianPreseedGenerator(_policy()).generate_late_script()
+    for unit in sorted((root / "config" / "systemd").glob("*.service")):
+        assert f"config/systemd/{unit.name}" in build, f"{unit.name} is not copied into the ISO"
+        assert f"$T/etc/systemd/system/{unit.name}" in late, f"{unit.name} is not installed by the late command"
+
+
+def test_every_service_the_apply_writes_is_enabled():
+    from family_linux.security.adapter import SystemAdapter
+    from family_linux.provisioner.system import SystemProvisioner
+
+    adapter = SystemAdapter(dry_run=True)
+    SystemProvisioner(adapter=adapter).apply_policy(_policy())
+    written = {Path(p).name for p in adapter.simulated_files if p.startswith("/etc/systemd/system/")}
+    enabled = set()
+    for c in adapter.executed_commands:
+        if c[:2] == ["systemctl", "enable"]:
+            enabled.add(c[-1] if "." in c[-1] else c[-1] + ".service")
+    # A .service started by a .path unit needs only the .path enabled
+    started_by_path = {name.replace(".path", ".service") for name in enabled if name.endswith(".path")}
+    assert written, "the apply wrote no units"
+    for unit in sorted(written):
+        assert unit in enabled or unit in started_by_path, f"{unit} is written but never enabled"

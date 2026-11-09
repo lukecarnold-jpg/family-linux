@@ -100,8 +100,10 @@ def test_late_script_creates_groups_sudoers_and_the_children():
 
 def test_late_script_copies_the_payload_and_enables_first_boot():
     script = _late()
-    assert f"cp -a $PAYLOAD $T/opt/" in script
-    assert "install -m 644 $PAYLOAD/policy.yaml $T/etc/family-linux/policy.yaml" in script
+    assert "cp -a $PAYLOAD/src $T/opt/family-linux/" in script
+    # Children can read /opt: the script (children's password hashes) and the policy must not be there
+    assert "cp -a $PAYLOAD $T/opt/" not in script
+    assert "install -m 600 $PAYLOAD/policy.yaml $T/etc/family-linux/policy.yaml" in script
     assert "in-target systemctl enable family-linux-firstboot.service" in script
     assert "/usr/lib/python3/dist-packages/family-linux.pth" in script
     assert "$T/usr/local/sbin/family-ctl" in script
@@ -204,3 +206,31 @@ def test_only_appliance_builds_power_off_after_first_boot():
 def test_family_controls_dependency_pkexec_is_installed():
     # Family Controls failed to load in UAT: Debian 13 ships pkexec as its own package.
     assert "pkexec" in PACKAGES
+
+
+def test_grub_pbkdf2_matches_grub_mkpasswd_format():
+    import hashlib
+    from family_linux.provisioner.preseed import grub_pbkdf2
+
+    salt = bytes(range(64))
+    value = grub_pbkdf2("Correct-Horse-42-Battery", salt=salt)
+    prefix, algo, kind, iterations, salt_hex, digest_hex = value.split(".")
+    assert (prefix, algo, kind, iterations) == ("grub", "pbkdf2", "sha512", "10000")
+    assert salt_hex == salt.hex().upper() and len(digest_hex) == 128
+    assert digest_hex == hashlib.pbkdf2_hmac("sha512", b"Correct-Horse-42-Battery", salt, 10000, 64).hex().upper()
+
+
+def test_boot_menu_needs_the_parent_password_but_starts_without_it():
+    policy = FamilyPolicy(
+        parent=ParentAccount("parent", "Family Administrator", password="Correct-Horse-42-Battery"),
+        children=[ChildAccount.create("kid", "Kid", "pre_teen", password="kidpass123")],
+    )
+    script = DebianPreseedGenerator(policy).generate_late_script()
+    lock = next(line for line in script.splitlines() if "01_family-linux" in line and "superusers" in line)
+    # The password is only written once the normal entries are unrestricted, in one step
+    assert lock.index("--unrestricted") < lock.index("superusers") < lock.index("password_pbkdf2 parent grub.pbkdf2.sha512.10000.")
+    assert "Correct-Horse-42-Battery" not in script
+    assert 'GRUB_DISABLE_RECOVERY="true"' in script
+    assert script.index("01_family-linux") < script.index("in-target update-grub")
+    # A failed step never copies the hash into the failure list
+    assert "fail '" in lock and "grub.pbkdf2" not in lock.split("|| fail", 1)[1]

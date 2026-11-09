@@ -92,6 +92,19 @@ def set_immutable(fd: int, immutable: bool) -> bool:
     return True
 
 
+def is_immutable(fd: int) -> Optional[bool]:
+    """True if the file or folder behind fd has the immutable flag; None if it cannot be read."""
+    try:
+        import fcntl
+        import struct
+
+        buffer = bytearray(8)
+        fcntl.ioctl(fd, FS_IOC_GETFLAGS, buffer, True)
+    except (ImportError, OSError):
+        return None
+    return bool(struct.unpack_from("i", buffer)[0] & FS_IMMUTABLE_FL)
+
+
 def list_desktop_files(dir_fd: int) -> List[str]:
     return [name for name in os.listdir(dir_fd) if name.endswith(".desktop")]
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Family Linux Bootstrap & Launcher Script
-# Provides a unified launcher for installation, policy management, parent dashboard, and verification.
+# Provides a unified launcher for installation, policy management, and verification.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -27,7 +27,6 @@ Usage: ./scripts/bootstrap-prototype.sh [COMMAND] [OPTIONS]
 Commands:
   install           Launch the interactive 12-step Family Linux installer
   install --dry-run Run installer in simulation mode (no system changes)
-  dashboard         Launch the local Parent Web Control Dashboard (http://127.0.0.1:8443)
   ctl [args...]     Run the 'family-ctl' parent administration CLI
   policyd           Run the screen time and curfew policy enforcement daemon
   policyd --one-shot Run a single curfew enforcement cycle
@@ -38,7 +37,6 @@ Commands:
 Examples:
   ./scripts/bootstrap-prototype.sh install --dry-run
   ./scripts/bootstrap-prototype.sh ctl status
-  ./scripts/bootstrap-prototype.sh dashboard
   ./scripts/bootstrap-prototype.sh verify
   ./scripts/bootstrap-prototype.sh test
 EOF
@@ -50,9 +48,6 @@ shift || true
 case "$COMMAND" in
     install)
         python3 -m family_linux.installer.wizard "$@"
-        ;;
-    dashboard)
-        python3 -m family_linux.parent_ui.server "$@"
         ;;
     ctl)
         python3 -m family_linux.cli.family_ctl "$@"

@@ -309,7 +309,7 @@ class InstallerWizard:
         print("  - Use this account to log in and administer the system.")
         print("  - Run 'family-ctl status' to view policies, accounts, and audit status.")
         print("  - Run 'family-ctl user add' to create additional child accounts.")
-        print("  - Run 'family-parent-dashboard' to launch the web-based parent portal.")
+        print("  - Open 'Family Controls' from the application menu to manage the children's settings.")
         if policy.children:
             print("\nChild Accounts:")
             for c in policy.children:

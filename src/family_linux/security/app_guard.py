@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import List, Dict, Optional, Set, Tuple
 
-from family_linux.models import ChildAccount, ALWAYS_BLOCKED_COMMANDS
+from family_linux.models import ChildAccount, ALWAYS_BLOCKED_COMMANDS, approved_entries_matching
 from family_linux.security.adapter import SystemAdapter
 from family_linux.security import child_dirs
 from family_linux.security.apparmor import PROFILE_NAME
@@ -45,31 +45,13 @@ class AppGuard:
         """Determines if a command or application is permitted for a child."""
         clean_name = Path(binary_or_app_name).name.lower().replace(".desktop", "")
 
-        # Always block blacklist
+        # A check only, with no audit record: it runs for every installed app at every menu
+        # refresh, and logging each hidden app filled the audit log. Changes the parent makes to
+        # the approved list are logged by family-ctl.
         if clean_name in ALWAYS_BLOCKED_COMMANDS or clean_name in [b.lower() for b in child.app_policy.blocked_apps]:
-            self.audit.log(
-                event_type="APP_BLOCKED",
-                user=child.username,
-                severity="WARNING",
-                details={"reason": "blocked_app_list", "app": binary_or_app_name},
-            )
             return False
-
-        # In allow-list mode, verify membership
         if child.app_policy.allow_list_mode:
-            allowed = any(
-                app.lower() in clean_name or clean_name in app.lower()
-                for app in child.app_policy.approved_apps
-            )
-            if not allowed:
-                self.audit.log(
-                    event_type="APP_BLOCKED",
-                    user=child.username,
-                    severity="INFO",
-                    details={"reason": "not_in_allow_list", "app": binary_or_app_name},
-                )
-                return False
-
+            return bool(approved_entries_matching(clean_name, child.app_policy.approved_apps))
         return True
 
     def discover_system_apps(self, app_dirs: Optional[List[Path]] = None) -> List[Dict[str, str]]:
@@ -274,11 +256,17 @@ AA_EXEC_PREFIX = f"aa-exec -p {PROFILE_NAME} -- "
 
 
 def confine_desktop_entry(source: str) -> str:
-    """Returns a copy of a .desktop file whose Exec lines run through aa-exec."""
+    """Returns a copy of a .desktop file whose Exec lines run through aa-exec.
+
+    An entry with DBusActivatable=true is started by the session bus, which ignores Exec, so the
+    app would run outside the profile. It is turned off, so the desktop starts the app from Exec.
+    """
     lines = []
     for line in source.splitlines():
         if line.startswith("Exec="):
             lines.append("Exec=" + AA_EXEC_PREFIX + line[len("Exec="):])
+        elif line.replace(" ", "").startswith("DBusActivatable="):
+            lines.append("DBusActivatable=false")
         else:
             lines.append(line)
     return "\n".join(lines) + "\n"

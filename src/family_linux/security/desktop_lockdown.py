@@ -16,6 +16,8 @@ parent out of a terminal. That managed block is removed when it is found.
 
 from __future__ import annotations
 
+import re
+import sys
 from pathlib import Path
 from typing import List
 
@@ -32,6 +34,12 @@ BEGIN_MARKER = "# BEGIN family-linux desktop lockdown (managed; do not edit)"
 END_MARKER = "# END family-linux desktop lockdown"
 PAM_BEGIN = "# BEGIN family-linux children's kiosk (managed; do not edit)"
 PAM_END = "# END family-linux children's kiosk"
+GATE_BEGIN = "# BEGIN family-linux children's sign-in hours (managed; do not edit)"
+GATE_END = "# END family-linux children's sign-in hours"
+RELOCK_BEGIN = "# BEGIN family-linux children's sign-in files (managed; do not edit)"
+RELOCK_END = "# END family-linux children's sign-in files"
+# The include that starts the user's systemd manager (pam_systemd), which reads user units.
+SESSION_INCLUDE = re.compile(r"^\s*@include\s+common-session\s*$")
 
 # Keys that stop a shell, the Alt+F2 run dialog, and the --config override.
 LOCKED_RESTRICTIONS = [
@@ -39,6 +47,8 @@ LOCKED_RESTRICTIONS = [
     "run_command=false",       # the "Run Command" option (Alt+F2)
     "action/run_command=false",  # the same option in menus and the desktop context menu
     "custom_config=false",     # --config cannot point an application at unlocked settings
+    "run_desktop_files=false",  # a .desktop file saved anywhere (Downloads, Desktop) cannot be run
+    "action/openwith=false",   # "Open With" cannot be given a command line to run
 ]
 
 
@@ -64,6 +74,31 @@ def render_pam_block() -> List[str]:
     ]
 
 
+def render_relock_block(python: str = sys.executable) -> List[str]:
+    """Re-locks a child's sign-in files as root before their session starts.
+
+    The locked folders sit in folders the child owns (~/.config/systemd, for example). A child can
+    rename such a parent folder and make a new one, which the immutable flag does not stop, so the
+    locks are checked and re-made at every sign-in. If that fails the sign-in is refused.
+    """
+    return [
+        RELOCK_BEGIN,
+        f"session [success=1 default=ignore] pam_succeed_if.so quiet user notingroup {CHILD_GROUP}",
+        f"session required pam_exec.so quiet type=open_session {python} -m family_linux.security.child_startup --pam",
+        RELOCK_END,
+    ]
+
+
+def render_gate_block(python: str = sys.executable) -> List[str]:
+    """Refuses a child's sign-in at bedtime, after the day's limit, or when turned off (screentime/gate.py)."""
+    return [
+        GATE_BEGIN,
+        f"account [success=1 default=ignore] pam_succeed_if.so quiet user notingroup {CHILD_GROUP}",
+        f"account required pam_exec.so quiet {python} -m family_linux.screentime.gate",
+        GATE_END,
+    ]
+
+
 def _without(lines: List[str], begin: str, end: str) -> List[str]:
     kept: List[str] = []
     skipping = False
@@ -79,12 +114,25 @@ def _without(lines: List[str], begin: str, end: str) -> List[str]:
     return kept
 
 
-def with_pam_block(current: str) -> str:
-    """Returns SDDM's PAM file with the managed block at the end. Applying twice leaves one copy."""
-    kept = _without(current.splitlines(), PAM_BEGIN, PAM_END)
+def with_pam_block(current: str, python: str = sys.executable) -> str:
+    """Returns SDDM's PAM file with the managed blocks. Applying twice leaves one copy of each.
+
+    The kiosk block goes at the end. The re-lock block goes straight before `@include common-session`,
+    so it runs before the user's systemd manager starts and reads their user units; without that
+    include it goes at the end.
+    """
+    kept = current.splitlines()
+    for begin, end in ((PAM_BEGIN, PAM_END), (RELOCK_BEGIN, RELOCK_END), (GATE_BEGIN, GATE_END)):
+        kept = _without(kept, begin, end)
     while kept and kept[-1].strip() == "":
         kept.pop()
-    return "\n".join(kept + render_pam_block()) + "\n"
+    relock = render_relock_block(python)
+    at = next((i for i, line in enumerate(kept) if SESSION_INCLUDE.match(line)), None)
+    if at is None:
+        kept = kept + relock
+    else:
+        kept = kept[:at] + relock + kept[at:]
+    return "\n".join(kept + render_gate_block(python) + render_pam_block()) + "\n"
 
 
 def without_system_block(current: str) -> str:
@@ -97,7 +145,14 @@ def without_system_block(current: str) -> str:
 
 def lockdown_in_place(kdeglobals: str, pam: str) -> bool:
     """True when the children's kiosk file holds every restriction and SDDM applies it to children."""
-    return all(item in kdeglobals for item in LOCKED_RESTRICTIONS) and all(line in pam for line in render_pam_block())
+    relock = render_relock_block()
+    return (
+        all(item in kdeglobals for item in LOCKED_RESTRICTIONS)
+        and all(line in pam for line in render_pam_block())
+        and all(line in pam for line in (relock[0], relock[1], relock[3]))
+        and "family_linux.security.child_startup --pam" in pam
+        and "family_linux.screentime.gate" in pam
+    )
 
 
 class DesktopLockdown:

@@ -8,11 +8,14 @@
     },
     "SearchSuggestEnabled": true,
     "Preferences": {
-      "browser.safesearch.enabled": true,
       "browser.urlbar.suggest.searches": true,
       "network.trr.mode": 5,
       "network.dns.echconfig.enabled": false,
       "network.dns.http3_echconfig.enabled": false
+    },
+    "Proxy": {
+      "Mode": "none",
+      "Locked": true
     }
   }
 }
