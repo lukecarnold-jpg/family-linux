@@ -51,7 +51,7 @@ jobs:
           ./scripts/bootstrap-prototype.sh --help
           ./scripts/bootstrap-prototype.sh install --dry-run --non-interactive --parent-user "admin" --parent-name "Admin" --parent-pass "$PARENT_PASS"
           ./scripts/bootstrap-prototype.sh ctl status
-          ./scripts/bootstrap-prototype.sh ctl user add testchild --name "Test Child" --tier young_child
+          echo "ci-child-pass" | ./scripts/bootstrap-prototype.sh ctl user add testchild --name "Test Child" --tier young_child --password-stdin
           ./scripts/bootstrap-prototype.sh ctl app approve testchild tuxpaint
           ./scripts/bootstrap-prototype.sh ctl time set testchild --daily-limit 90 --bedtime-weekday 20:00
           ./scripts/bootstrap-prototype.sh ctl web block badsite.com
@@ -113,7 +113,9 @@ jobs:
       - name: Install Family Linux
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # Not editable: the services run as root with only CAP_NET_ADMIN, which cannot read the
+          # checkout under /home/runner (0750). An installed system has the code in /opt, readable.
+          pip install ".[dev]"
 
       - name: Apply policy as root (live, not dry-run)
         run: |
