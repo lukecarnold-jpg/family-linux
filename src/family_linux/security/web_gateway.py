@@ -269,8 +269,13 @@ def render_service(python: str = sys.executable) -> str:
         "CapabilityBoundingSet=CAP_NET_ADMIN\n"
         "NoNewPrivileges=yes\n"
         "ProtectSystem=strict\n"
-        f"ReadWritePaths={REQUESTS_PATH.parent}\n"
-        "ProtectHome=yes\n"
+        # StateDirectory makes /var/lib/family-linux writable and creates it if missing.
+        # ReadWritePaths= failed to start the service when the folder did not exist yet
+        # (status=226/NAMESPACE, seen in CI).
+        f"StateDirectory={REQUESTS_PATH.parent.name}\n"
+        "StateDirectoryMode=0755\n"
+        # read-only, not yes: an installed package may live under /home (seen in CI)
+        "ProtectHome=read-only\n"
         "PrivateTmp=yes\n"
         "PrivateDevices=yes\n"
         "ProtectKernelModules=yes\n"

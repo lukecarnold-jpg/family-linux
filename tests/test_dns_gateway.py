@@ -484,9 +484,11 @@ def test_gateway_service_is_sandboxed():
 
     unit = render_service("/usr/bin/python3")
     for line in ("CapabilityBoundingSet=CAP_NET_ADMIN", "NoNewPrivileges=yes", "ProtectSystem=strict",
-                 "ReadWritePaths=/var/lib/family-linux", "ProtectHome=yes", "UMask=0077",
+                 "StateDirectory=family-linux", "ProtectHome=read-only", "UMask=0077",
                  "ExecReload=/bin/kill -HUP $MAINPID"):
         assert line in unit
+    # ReadWritePaths stops the service starting when the folder is missing (CI)
+    assert "ReadWritePaths" not in unit
 
 
 def test_safe_search_names_get_the_filtered_services_addresses(tmp_path):

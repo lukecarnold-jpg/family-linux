@@ -787,6 +787,17 @@ Request from the user: act on the review's list, starting with item 1.
 
 **Tests.** 338 passed, 5 skipped (284 before; the 16 dashboard tests were removed). The ISO for the second install was built before the last three changes (the `--print-reply` call, one warning per check, log rotation); those are unit-tested only.
 
+## Session 30 (continued): CI on the commit `69e8128`
+
+**Request.** Commit and push.
+
+**CI run 42561861970 (PR #9) failed; the `Debian install` workflow (42561861985) passed.** Two causes:
+
+- **`family-dnsd` did not start on the runner.** `status=226/NAMESPACE`, "Failed to set up mount namespacing: /var/lib/famil...": `ReadWritePaths=/var/lib/family-linux` makes systemd refuse to start a service when the folder is missing. It existed on the VM installs (the first boot writes there first) but not on a fresh runner, so `verify` reported the service "activating". **Fix:** `StateDirectory=family-linux` (systemd creates the folder and makes it writable), and `ProtectHome=read-only` instead of `yes`, because CI runs the package from the checkout under `/home`. The screen-time unit's `ReadOnlyPaths` now has the `-` prefix, so a missing `/etc/family-linux` cannot stop it either. On an installed Debian system both folders exist before the services start, which is why the VM did not show it.
+- **Two screen-time tests depended on the time of day.** CI ran at 04:27 UTC, inside the default bedtime, so the child was signed out instead of warned (locally it was afternoon). **Fix:** those tests allow the whole day.
+
+**Tests.** 338 passed, 5 skipped.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

@@ -36,7 +36,7 @@ def render_service(python: str = sys.executable) -> str:
         # It only writes its usage file and the audit log; everything else is read-only.
         "ProtectSystem=full\n"
         "ProtectHome=read-only\n"
-        "ReadOnlyPaths=/etc/family-linux\n"
+        "ReadOnlyPaths=-/etc/family-linux\n"  # "-": a missing folder does not stop the start
         "\n"
         "[Install]\n"
         "WantedBy=multi-user.target\n"

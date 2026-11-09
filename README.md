@@ -202,7 +202,7 @@ Not yet implemented, or not validated:
 Repository status (checked with `gh` on 2026-11-09):
 
 - Default branch: `main`. It includes PR #7 (`debian-kde`, the Debian rebuild from Session 25) and PR #8 (`debian-kde`, merged as `cdd2ef7`: interactive ISO, appliance fixes, Sessions 26 to 28). CI passed on that merge. CI runs on pushes to `main` and on pull requests into `main`.
-- Working branch: `debian-kde`. Its commits that are not on `main` are the Session 29 browser changes (`33e9caa`) and this status update. They are in pull request [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) into `main` (open). Its latest CI run (41541137994) failed in "Live apply and verify" on a control connection from the runner to `9.9.9.9:443`, not on a child check; the `Debian install` workflow passed. The Session 30 changes (the full review fixes) are not committed yet; the control now retries.
+- Working branch: `debian-kde`. Its commits that are not on `main` are the Session 29 browser changes (`33e9caa`), two status updates, the Session 30 review fixes (`69e8128`) and the CI fixes that follow it. They are in pull request [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) into `main` (open). On `69e8128` the `Debian install` workflow (QEMU install of the amd64 ISO) passed and CI failed: the web filter service did not start on the runner (its sandbox needed `/var/lib/family-linux` to exist) and two tests depended on the time of day. Both are fixed in the next commit; see DEV_HIST.
 
 Design documents:
 

@@ -205,6 +205,9 @@ def test_warnings_are_given_again_on_a_new_day(tmp_path: Path):
     child = ChildAccount.create("bobby", "Bobby")
     child.time_limits.daily_limit_minutes = 10
     child.time_limits.warning_minutes = [15]
+    # Allowed all day (bedtime at the wake time counts as midnight), so the result does not depend
+    # on when the test runs (it failed in CI at 04:27 UTC, inside the default bedtime).
+    child.time_limits.wake_time = child.time_limits.bedtime_weekday = child.time_limits.bedtime_weekend = "00:00"
     policy = FamilyPolicy(parent=ParentAccount(username="parent", full_name="Parent", sudo_access=True), children=[child])
     daemon, _, _ = _daemon_for(tmp_path, policy)
     daemon.get_logged_in_users = lambda: ["bobby"]
@@ -356,6 +359,9 @@ def test_one_warning_when_two_thresholds_pass_at_once(tmp_path: Path):
     child = ChildAccount.create("bobby", "Bobby")
     child.time_limits.daily_limit_minutes = 2
     child.time_limits.warning_minutes = [15, 5, 1]
+    # Allowed all day (bedtime at the wake time counts as midnight), so the result does not depend
+    # on when the test runs (it failed in CI at 04:27 UTC, inside the default bedtime).
+    child.time_limits.wake_time = child.time_limits.bedtime_weekday = child.time_limits.bedtime_weekend = "00:00"
     policy = FamilyPolicy(parent=ParentAccount(username="parent", full_name="Parent", sudo_access=True), children=[child])
     daemon, _, _ = _daemon_for(tmp_path, policy)
     daemon.get_logged_in_users = lambda: ["bobby"]
