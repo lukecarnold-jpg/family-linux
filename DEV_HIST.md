@@ -881,6 +881,14 @@ Not changed: the review's point that the Desktop folder name can differ in anoth
 
 **Note.** An earlier watch of this run reported success. That was wrong: the exit code it printed came from `tail`, not from `gh`. The run's own conclusion was `failure`.
 
+## Session 33: README status after PR #10
+
+**Request.** Update the README repository status for the merge of PR #10.
+
+**Change.** Checked with `gh` and `git fetch` on 2026-11-19: `main` is at `3030b4c` (PR #10 merged, CI on that merge passed, run `44511609798`). No pull requests are open. `debian-kde` has no commits that are not on `main`. The status now says so. The earlier lines about an open PR #10 and the uncommitted parent guide are removed.
+
+**Checks.** Documentation only; no code or test changes. Committed on the branch `docs/readme-status-pr10` from `main`, so it goes through its own pull request and CI.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

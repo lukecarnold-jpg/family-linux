@@ -206,9 +206,9 @@ Not yet implemented, or not validated:
 
 Repository status (checked with `gh` and `git fetch` on 2026-11-19):
 
-- Default branch: `main` at `64694b7`. It includes PR #7 (`debian-kde`, the Debian rebuild from Session 25), PR #8 (`debian-kde`, merged as `cdd2ef7`: interactive ISO, appliance fixes, Sessions 26 to 28) and PR [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) (`debian-kde`, merged 2026-11-09: other browsers, the Session 30 review fixes and the CI fixes). CI passed on the PR #9 merge (run 42564767909). The scheduled `Debian install` workflow on `main` passed on 2026-11-16 (run 43848500874). CI runs on pushes to `main` and on pull requests into `main`.
-- Open pull requests: [#10](https://github.com/lukecarnold-jpg/family-linux/pull/10) (`debian-kde` into `main`): starter sites chosen per child by age (Session 31), the parent guide on the parent's desktop (Session 32), a fix from the review of the PR, and a CI fix (`51bf0eb`, Session 32 in DEV_HIST). On `51bf0eb` every CI job passed (run 44508391190), including the browser step that failed on `dbb0669` (run 44507507508), and the `Debian install` workflow passed (run 44508390932).
-- Working branch: `debian-kde`. Its four commits that are not on `main` are `c2ef96c`, `dbb0669`, `7aaa3f1` and `51bf0eb`, all pushed and all in PR #10.
+- Default branch: `main` at `3030b4c`. It includes PR #7 (`debian-kde`, the Debian rebuild from Session 25), PR #8 (`debian-kde`, merged as `cdd2ef7`: interactive ISO, appliance fixes, Sessions 26 to 28) and PR [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) (`debian-kde`, merged 2026-11-09: other browsers, the Session 30 review fixes and the CI fixes), and PR [#10](https://github.com/lukecarnold-jpg/family-linux/pull/10) (`debian-kde`, merged 2026-11-19 as `3030b4c`: starter sites chosen per child by age, the parent guide on the parent's desktop, the review fixes and a CI fix). CI passed on the PR #9 merge (run 42564767909) and on the PR #10 merge (run 44511609798). The scheduled `Debian install` workflow on `main` passed on 2026-11-16 (run 43848500874). CI runs on pushes to `main` and on pull requests into `main`.
+- Open pull requests: none.
+- Working branch: `debian-kde`. It has no commits that are not on `main`: PR #10 merged all of them. Before the next change on it, update it from `main`.
 
 Design documents:
 
