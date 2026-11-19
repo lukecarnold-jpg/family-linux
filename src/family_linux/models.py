@@ -185,6 +185,33 @@ class TimeLimitPolicy:
         return cls()
 
 
+# Starter sites pre-filled for a child, by age tier. The installer and `family-ctl user add` ask
+# whether to use them (`starter_sites`), and the parent can change the list later. A plain name
+# covers the site and all its subdomains ("*.example" would leave out example itself).
+STARTER_SITES: Dict[str, List[str]] = {
+    AgeTier.YOUNG_CHILD.value: [
+        "pbskids.org",
+        "scratch.mit.edu",
+        "khanacademy.org",
+        "nasa.gov",
+    ],
+    AgeTier.PRE_TEEN.value: [
+        "wikipedia.org",
+        "khanacademy.org",
+        "scratch.mit.edu",
+        "nasa.gov",
+        "pbskids.org",
+    ],
+    AgeTier.TEEN.value: [
+        "wikipedia.org",
+        "khanacademy.org",
+        "nasa.gov",
+        "britannica.com",
+        "code.org",
+    ],
+}
+
+
 @dataclass
 class WebFilterPolicy:
     dns_provider: str = DNSProvider.CLEANBROWSING_FAMILY.value
@@ -201,13 +228,15 @@ class WebFilterPolicy:
         "chatroulette.com",
         "tiktok.com",
     ])
-    allowed_domains: List[str] = field(default_factory=lambda: [
-        "*.wikipedia.org",
-        "*.khanacademy.org",
-        "*.scratch.mit.edu",
-        "*.nasa.gov",
-        "*.pbskids.org",
-    ])
+    allowed_domains: List[str] = field(default_factory=lambda: list(STARTER_SITES[AgeTier.PRE_TEEN.value]))
+
+    @classmethod
+    def for_tier(cls, tier: AgeTier | str, starter_sites: bool = True) -> WebFilterPolicy:
+        """The web filter for a new child: the tier's starter sites, or none when the parent declines them."""
+        tier_str = tier.value if isinstance(tier, AgeTier) else tier
+        if not starter_sites:
+            return cls(allowed_domains=[])
+        return cls(allowed_domains=list(STARTER_SITES.get(tier_str, STARTER_SITES[AgeTier.PRE_TEEN.value])))
 
 
 # Approved entries that stand for a family of desktop entries. Debian ships LibreOffice as one entry
@@ -301,7 +330,7 @@ class ChildAccount:
         return errors
 
     @classmethod
-    def create(cls, username: str, full_name: str, age_tier: str | AgeTier = AgeTier.PRE_TEEN, password: Optional[str] = None) -> ChildAccount:
+    def create(cls, username: str, full_name: str, age_tier: str | AgeTier = AgeTier.PRE_TEEN, password: Optional[str] = None, starter_sites: bool = True) -> ChildAccount:
         tier_str = age_tier.value if isinstance(age_tier, AgeTier) else age_tier
         return cls(
             username=username,
@@ -309,7 +338,7 @@ class ChildAccount:
             age_tier=tier_str,
             password=password,
             time_limits=TimeLimitPolicy.for_tier(tier_str),
-            web_filter=WebFilterPolicy(),
+            web_filter=WebFilterPolicy.for_tier(tier_str, starter_sites),
             app_policy=AppPolicy.for_tier(tier_str),
         )
 

@@ -800,6 +800,39 @@ Request from the user: act on the review's list, starting with item 1.
 
 **Tests.** 338 passed, 5 skipped.
 
+## Session 31: starter sites chosen per child, by age
+
+**Request.** Ask whether the installer can pre-fill child-friendly sites. Answer: yes. Each child gets the starter sites for their age, and the installer asks for each child separately (the parent's answer: per child, with age-appropriate lists).
+
+**Cause (why it was needed).** There was no choice. `WebFilterPolicy` put the same five sites (`*.wikipedia.org`, `*.khanacademy.org`, `*.scratch.mit.edu`, `*.nasa.gov`, `*.pbskids.org`) on every child, and nothing in the installer, `family-ctl user add` or the ISO build could change that.
+
+**Fix.**
+
+- `models.py`: `STARTER_SITES` holds one list per age tier. Young child: PBS Kids, Scratch, Khan Academy, NASA. Pre-teen: the old five. Teen: Wikipedia, Khan Academy, NASA, Britannica, Code.org. The names are plain (`pbskids.org`), so each covers the site and its subdomains; a `*.` entry would leave out the bare site. `WebFilterPolicy.for_tier(tier, starter_sites)` and `ChildAccount.create(..., starter_sites=True)` use them. Blocks are the same for every age.
+- `installer/wizard.py`: the child step shows the tier's list and asks "Pre-fill these starter sites for this child? (y/n)", default yes, once per child. The non-interactive path takes `--no-starter-sites USERNAME` (repeatable), and an unknown name is an error. The pre-installation summary shows each child's count of allowed sites.
+- `scripts/build-debian-iso.sh`: `NO_STARTER_SITES` (usernames separated by spaces) passes `--no-starter-sites` for each name.
+- `cli/family_ctl.py`: `user add --no-starter-sites`.
+- Children already on a system keep their current lists. The change applies when a child is added.
+
+**Found while writing the parent guide (fixed in the guide).** `docs/web-filtering-guide.md` said `example.com` covers only that exact address. The code (`DomainRules._matches`) says a plain name covers the site and all its subdomains, and only `*.example.com` leaves out the bare address. The guide now says so. Its `family-ctl web remove` example did not work as written: the command matches the exact text in the list, so the entry had to be typed with its `*.`. The starter lists now use plain names, so the example is `pbskids.org`; children set up before this change keep their `*.` names, and the guide says to remove those with the `*.`.
+
+**Review (Opus, medium effort, CLAUDE.md).** No serious defects. Changes made from it:
+
+1. The starter lists store plain names. A `*.` entry did not allow the bare site (`pbskids.org` went through the family filter, not the allow list), so "always allowed" was false for the bare name. A regression test now checks, for all three tiers, that each starter site and its `www.` name are allowed.
+2. The model comment said `*.example` covers the site and its subdomains. It does not; corrected.
+3. The wizard's starter prompt falls back to the pre-teen list for an unknown tier, as `for_tier` does.
+4. The parent guide's sentence about the blocked list was garbled. It now says the sites are always allowed, even if the family filter would block part of them.
+
+Not changed: the review gave PR #9's merge date as 2026-11-02. That is its creation date, which `gh pr list` shows. `gh pr view 9` gives the merge as 2026-11-09. The `getattr` in `family_ctl.py` stays, so hand-built argument objects keep working.
+
+**Checks.**
+
+- `pytest -q` from the repository root: 344 passed, 5 skipped (338 passed before, plus 6 new tests: two for the tier lists and the declined list in `test_models.py`, one for `user add` in `test_cli.py`, three for the installer in `test_installer.py`). After the review: 347 passed, 5 skipped (the bare-name test runs once per tier).
+- `bash -n scripts/build-debian-iso.sh`: parses.
+- Not run: an ISO build or a VM install. The change touches only the policy values and the installer's questions. The preseed and the first-boot apply read the policy unchanged.
+
+**Not done.** The Family Controls app's Add child dialog has no choice; children it adds get the starter sites for their tier. The lists are a first proposal for a parent to review (see the open items). No commit or push: the change is uncommitted on `debian-kde`.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
@@ -835,3 +868,6 @@ Request from the user: act on the review's list, starting with item 1.
 31. Session 30, partly done: the apply writes `/etc/logrotate.d/family-linux` (weekly, 52 kept). Still to do: read the audit log from the end instead of loading it whole.
 32. Session 30: check the clean sign-out of a child on a build with `--print-reply`, the D-Bus denials (whether dbus-daemon enforces them on Debian 13), SafeSearch answers in Firefox, and loopback isolation with two children, in a VM.
 33. Session 30: the ISOs in `dist/` predate Sessions 29 and 30. Rebuild them with your own passwords.
+34. Session 31: the starter lists in `models.py` (`STARTER_SITES`) are a first proposal. The parent should review them, in particular Wikipedia (not on the under-10 list), Britannica and Code.org (teen only). Changing a list means editing the code and the parent guide's table together.
+35. Session 31: the Family Controls app's Add child dialog has no starter-sites choice. Add a checkbox there if the parent wants one in the app as well as in the installer and `family-ctl`.
+36. Session 31: the change is uncommitted on `debian-kde`. Commit and push it when asked; it has no CI run until a pull request into `main` is open. Opus review (CLAUDE.md) has not been run on it.

@@ -93,6 +93,68 @@ def test_non_interactive_install_accepts_a_compliant_parent_password(monkeypatch
     assert (out.parent / "late-command.sh").exists()
 
 
+def test_non_interactive_starter_sites_can_be_declined_per_child(monkeypatch, tmp_path):
+    from family_linux.installer import wizard as wizard_module
+
+    policy_out = tmp_path / "policy.yaml"
+    monkeypatch.setattr("sys.argv", [
+        "family-installer", "--dry-run", "--non-interactive", "--export-preseed", str(tmp_path / "user-data"),
+        "--export-policy", str(policy_out), "--parent-pass", "Correct-Horse-42",
+        "--child", "kid1:Kid One:young_child:ChildSecret12",
+        "--child", "kid2:Kid Two:teen:ChildSecret12",
+        "--no-starter-sites", "kid1",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        wizard_module.main()
+    assert exc.value.code == 0
+
+    kids = {c["username"]: c for c in yaml.safe_load(policy_out.read_text())["children"]}
+    assert kids["kid1"]["web_filter"]["allowed_domains"] == []
+    assert "britannica.com" in kids["kid2"]["web_filter"]["allowed_domains"]
+
+
+def test_non_interactive_no_starter_sites_must_name_a_child(monkeypatch):
+    from family_linux.installer import wizard as wizard_module
+
+    monkeypatch.setattr("sys.argv", [
+        "family-installer", "--dry-run", "--non-interactive", "--parent-pass", "Correct-Horse-42",
+        "--child", "kid1:Kid One:young_child:ChildSecret12",
+        "--no-starter-sites", "kid9",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        wizard_module.main()
+    assert "kid9" in str(exc.value)
+
+
+def test_interactive_child_step_offers_the_starter_sites_and_a_declined_list_is_empty(monkeypatch, capsys):
+    wizard = InstallerWizard(dry_run=True, interactive=True)
+    answers = {
+        "Do you want to create a child account now?": "y",
+        "Child username": "kid1",
+        "Child full name": "Kid One",
+        "Pre-fill these starter sites": "n",
+        "Add another child account?": "n",
+    }
+    asked = []
+
+    def fake_prompt(text, default=None):
+        asked.append(text)
+        for key, value in answers.items():
+            if key in text:
+                return value
+        return default
+
+    monkeypatch.setattr(wizard, "prompt", fake_prompt)
+    monkeypatch.setattr(wizard, "prompt_choice", lambda text, options, default: options[2])  # teen
+    monkeypatch.setattr(wizard, "secret_prompt", lambda text: "ChildSecret12")
+    wizard.run_step_6_child_accounts()
+
+    assert sum("Pre-fill these starter sites" in text for text in asked) == 1
+    assert "britannica.com" in capsys.readouterr().out
+    assert len(wizard.children) == 1
+    assert wizard.children[0].web_filter.allowed_domains == []
+
+
 def test_interactive_parent_step_retries_until_password_complies(monkeypatch):
     wizard = InstallerWizard(dry_run=True, interactive=True)
     answers = itertools.cycle(["parent", "Parent Admin"])

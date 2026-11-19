@@ -196,6 +196,7 @@ class FamilyCtl:
                 full_name=args.name or args.username.capitalize(),
                 age_tier=tier,
                 password=args.password,
+                starter_sites=not getattr(args, "no_starter_sites", False),
             )
             policy.children.append(child)
             self.provisioner.apply_policy(policy, reason=f"Added child {args.username}", layers=CHILD_ADDED_LAYERS)
@@ -666,6 +667,7 @@ def main() -> None:
     add_p.add_argument("username", help="Child username")
     add_p.add_argument("--name", help="Child full name")
     add_p.add_argument("--tier", choices=["young_child", "pre_teen", "teen"], default="pre_teen", help="Age preset tier")
+    add_p.add_argument("--no-starter-sites", action="store_true", help="Start without the age tier's starter sites")
     add_pw = add_p.add_mutually_exclusive_group()
     add_pw.add_argument("--password", help="Account password (visible to other processes; prefer --password-stdin)")
     add_pw.add_argument("--password-stdin", action="store_true", help="Read the account password from standard input")

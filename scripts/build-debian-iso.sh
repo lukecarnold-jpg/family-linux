@@ -21,6 +21,7 @@ set -euo pipefail
 # Mac), amd64 elsewhere. Override with ARCH=arm64 or ARCH=amd64.
 #
 # Optional: CHILD_SPECS='kid:Kid:pre_teen:child-password' (one child per line).
+# Optional: NO_STARTER_SITES='kid' (usernames, separated by spaces, that start without the starter sites for their age).
 # Optional: TIMEZONE='Australia/Sydney' (default: UTC). Curfews use local time.
 # Optional: TARGET_DISK=/dev/nvme0n1 (default: the first disk the installer finds).
 # Optional: MODE=interactive (default) or MODE=automated.
@@ -111,6 +112,12 @@ if [ -n "${CHILD_SPECS:-}" ]; then
     while IFS= read -r spec; do
         [ -n "$spec" ] && CHILD_ARGS+=(--child "$spec")
     done <<< "$CHILD_SPECS"
+fi
+# Usernames (separated by spaces) that start without their age tier's starter sites.
+if [ -n "${NO_STARTER_SITES:-}" ]; then
+    for child_name in $NO_STARTER_SITES; do
+        CHILD_ARGS+=(--no-starter-sites "$child_name")
+    done
 fi
 TARGET_ARGS=()
 # Only the automated build erases the disk without the installer's confirmation screen.

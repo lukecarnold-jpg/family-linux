@@ -2,6 +2,7 @@
 
 import pytest
 from family_linux.models import (
+    STARTER_SITES,
     ParentAccount,
     ChildAccount,
     FamilyPolicy,
@@ -79,6 +80,36 @@ def test_family_policy_detects_duplicate_usernames():
     policy = FamilyPolicy(parent=parent, children=[child1])
     errors = policy.validate()
     assert any("Duplicate username detected" in e for e in errors)
+
+
+def test_starter_sites_are_chosen_by_age_tier():
+    young = ChildAccount.create("kid1", "Kid One", age_tier=AgeTier.YOUNG_CHILD, password="ChildSecret12")
+    teen = ChildAccount.create("kid2", "Kid Two", age_tier=AgeTier.TEEN, password="ChildSecret12")
+
+    assert "pbskids.org" in young.web_filter.allowed_domains
+    assert "wikipedia.org" not in young.web_filter.allowed_domains
+    assert "britannica.com" in teen.web_filter.allowed_domains
+    assert "pbskids.org" not in teen.web_filter.allowed_domains
+    # Blocks are the same for every age
+    assert young.web_filter.blocked_domains == teen.web_filter.blocked_domains
+
+
+@pytest.mark.parametrize("tier", ["young_child", "pre_teen", "teen"])
+def test_starter_site_covers_the_bare_name_and_its_subdomains(tier):
+    from family_linux.security.dns_gateway import DomainRules
+
+    rules = DomainRules(blocked=["*.adult"], allowed=STARTER_SITES[tier])
+    for site in STARTER_SITES[tier]:
+        assert rules.decide(site) == "allow", site
+        assert rules.decide(f"www.{site}") == "allow", site
+        assert rules.decide(f"not{site}") != "allow", site
+
+
+def test_child_can_start_without_starter_sites():
+    child = ChildAccount.create("kid3", "Kid Three", age_tier=AgeTier.PRE_TEEN, password="ChildSecret12", starter_sites=False)
+
+    assert child.web_filter.allowed_domains == []
+    assert "*.adult" in child.web_filter.blocked_domains
 
 
 def test_age_tier_presets():
