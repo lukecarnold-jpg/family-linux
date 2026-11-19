@@ -228,6 +228,8 @@ class WebFilterPolicy:
         "chatroulette.com",
         "tiktok.com",
     ])
+    # The bare default is the pre-teen list. A child loaded from a policy file gets the list it was saved with,
+    # and new children get their own tier's list from `for_tier`.
     allowed_domains: List[str] = field(default_factory=lambda: list(STARTER_SITES[AgeTier.PRE_TEEN.value]))
 
     @classmethod

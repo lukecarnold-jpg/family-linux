@@ -126,6 +126,15 @@ def test_non_interactive_no_starter_sites_must_name_a_child(monkeypatch):
     assert "kid9" in str(exc.value)
 
 
+def test_no_starter_sites_flag_needs_a_non_interactive_run(monkeypatch):
+    from family_linux.installer import wizard as wizard_module
+
+    monkeypatch.setattr("sys.argv", ["family-installer", "--dry-run", "--no-starter-sites", "kid1"])
+    with pytest.raises(SystemExit) as exc:
+        wizard_module.main()
+    assert "needs --non-interactive" in str(exc.value)
+
+
 def test_interactive_child_step_offers_the_starter_sites_and_a_declined_list_is_empty(monkeypatch, capsys):
     wizard = InstallerWizard(dry_run=True, interactive=True)
     answers = {

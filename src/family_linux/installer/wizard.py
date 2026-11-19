@@ -370,6 +370,8 @@ def main() -> None:
     parser.add_argument("--unattended-disk", action="store_true", help="With --export-preseed: erase the disk without the installer's confirmation screen (automated builds only)")
     parser.add_argument("--export-policy", type=str, help="With --export-preseed: also write the policy file (no passwords) for first-boot provisioning")
     args = parser.parse_args()
+    if args.no_starter_sites and not (args.non_interactive or args.export_preseed):
+        sys.exit("Error: --no-starter-sites needs --non-interactive or --export-preseed.")
 
     wizard = InstallerWizard(dry_run=args.dry_run, interactive=not args.non_interactive)
     wizard.language = args.language

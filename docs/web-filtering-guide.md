@@ -55,7 +55,7 @@ This shows the DNS provider, SafeSearch, incognito and developer-tools settings,
 
 1. Open the child's page, then find **Websites**.
 2. In **Block a website**, type the site, for example `example.com`.
-3. Press the **Apply** button (the tick at the end of the box).
+3. Click the **Add** button next to the box, or press Enter.
 
 **In the Terminal:**
 
@@ -69,7 +69,7 @@ Replace `kid` with your child's username. Leave out `--child kid` to block the s
 
 Use this for a site that is blocked by default, or one you want to be sure is available.
 
-**In the app:** type the site into **Always allow a website** and press **Apply**.
+**In the app:** type the site into **Always allow a website**, click **Add** (or press Enter).
 
 **In the Terminal:**
 

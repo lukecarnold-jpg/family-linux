@@ -53,8 +53,22 @@ def test_guide_has_no_scripts_and_loads_nothing_from_the_internet():
     assert "<link" not in page.lower()
     assert "<img" not in page.lower()
     assert "@import" not in page
-    # The only web address in the page is the Google search link, and only as a clickable link
-    assert set(re.findall(r'(?:href|src)="(https?://[^"]+)"', page)) <= {search_url(t) for t in BRACKETS}
+    # The only web addresses in the page are the three Google search links, and they are the links that are there
+    found = set(re.findall(r'(?:href|src)="(https?://[^"]+)"', page))
+    assert found, "the search links are missing"
+    assert found <= {search_url(t) for t in BRACKETS}
+
+
+def test_each_child_row_shows_only_that_childs_sites():
+    young = ChildAccount.create("kid1", "Kid One", age_tier=AgeTier.YOUNG_CHILD, password="ChildSecret12")
+    teen = ChildAccount.create("kid2", "Kid Two", age_tier=AgeTier.TEEN, password="ChildSecret12")
+    page = render_guide_html(make_policy(young, teen))
+
+    rows = {row for row in re.findall(r"<tr>.*?</tr>", page) if "<code>kid" in row}
+    row_for = {name: next(r for r in rows if f"<code>{name}</code>" in r) for name in ("kid1", "kid2")}
+
+    assert "pbskids.org" in row_for["kid1"] and "britannica.com" not in row_for["kid1"]
+    assert "britannica.com" in row_for["kid2"] and "pbskids.org" not in row_for["kid2"]
 
 
 def test_names_from_the_policy_are_escaped():
@@ -69,9 +83,11 @@ def test_late_script_puts_the_guide_on_the_parents_desktop_and_gives_it_to_the_p
     child = ChildAccount.create("kid1", "Kid One", age_tier=AgeTier.PRE_TEEN, password="ChildSecret12")
     late = DebianPreseedGenerator(make_policy(child)).generate_late_script()
 
-    assert f"$PAYLOAD/{GUIDE_FILE_NAME}" in late
-    assert f"/home/parent/Desktop/{GUIDE_FILE_NAME}" in late
-    assert "in-target chown -R parent:parent /home/parent/Desktop" in late
+    install_line = f'install -m 644 $PAYLOAD/{GUIDE_FILE_NAME} "$T"/home/parent/Desktop/{GUIDE_FILE_NAME}'
+    mkdir_line = "in-target mkdir -p /home/parent/Desktop"
+    chown_line = "in-target chown -R parent:parent /home/parent/Desktop"
+    assert install_line in late
+    assert late.index(mkdir_line) < late.index(install_line) < late.index(chown_line)
 
 
 def test_wizard_export_writes_the_guide_beside_the_preseed(monkeypatch, tmp_path):

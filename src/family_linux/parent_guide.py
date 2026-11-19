@@ -54,7 +54,8 @@ def render_guide_html(policy: FamilyPolicy) -> str:
         rows = []
         for child in policy.children:
             label, _ = bracket_for(child.age_tier)
-            sites = [html.escape(d.removeprefix("*.")) for d in child.web_filter.allowed_domains]
+            # Shown exactly as stored, so a name in the guide is the name `family-ctl web remove` takes.
+            sites = [html.escape(d) for d in child.web_filter.allowed_domains]
             allowed = ", ".join(sites) if sites else "none"
             rows.append(
                 "<tr>"
@@ -107,7 +108,7 @@ def render_guide_html(policy: FamilyPolicy) -> str:
 <ol>
 <li>Open <b>Family Controls</b> from the application menu and enter your password.</li>
 <li>Click your child's name, then find <b>Websites</b>.</li>
-<li>Type the site (for example <code>example.com</code>) in <b>Always allow a website</b> or in the block box, and press Apply.</li>
+<li>Type the site (for example <code>example.com</code>) in <b>Always allow a website</b> or in the block box, then click <b>Add</b> (or press Enter).</li>
 </ol>
 <p>In the terminal, type <code>sudo family-ctl web allow example.com --child {example_user}</code> to allow a site, or <code>sudo family-ctl web block example.com --child {example_user}</code> to block one. Use your child's user name from the table above.</p>
 

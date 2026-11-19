@@ -855,6 +855,16 @@ Not changed: the review gave PR #9's merge date as 2026-11-02. That is its creat
 - `pytest -q`: 356 passed, 5 skipped (347 before, plus 9 new tests in `tests/test_parent_guide.py`: the lists per age, "none" for a declined child, one Google link per bracket, no scripts or outside loads, escaping of names, the late-command step, and the export writing the file).
 - `bash -n scripts/build-debian-iso.sh`: parses.
 - A sample page was rendered and read in full.
+
+**Review of PR #10 (Opus, medium effort).** Nothing serious: the late-command lines are quoted and ordered correctly, the parent's home stays 0700, and every value in the page is escaped. Fixed from it:
+
+1. **The guide named a button that does not exist.** It said "press Apply" (and the parent guide said "the tick"). The website boxes have an **Add** button (`kde_app/app.py`, `_rule_entry`), and Enter also works. Fixed in `parent_guide.py` and `docs/web-filtering-guide.md`.
+2. **`--no-starter-sites` was ignored in the interactive wizard**, which asks its own question for each child. It is now an error unless the run is `--non-interactive` or `--export-preseed`.
+3. **The guide showed a different name from the stored rule.** It stripped `*.`, so an older entry `*.pbskids.org` appeared as `pbskids.org`, which `web remove` does not match. The guide now shows each name as stored.
+4. **Weak tests.** The search-link check passed when no links were found; it now requires the links. A new check looks at each child's own table row. The late-command check now matches the whole `install` line and the order mkdir, install, chown.
+5. A comment on the `WebFilterPolicy` default (the pre-teen list), which only applies to a child loaded without a `web_filter` block.
+
+Not changed: the review's point that the Desktop folder name can differ in another installer language (open item 39).
 - Not run: an ISO build or a VM install (open item 37). Not reviewed by Opus (CLAUDE.md). Not committed.
 
 ## Open items, in priority order
@@ -897,3 +907,4 @@ Not changed: the review gave PR #9's merge date as 2026-11-02. That is its creat
 36. Session 31: the change is committed and pushed as `c2ef96c` on `debian-kde`. It has no CI run until a pull request into `main` is open.
 37. Session 32: check in a VM that the guide appears on the parent's desktop, opens in the browser, has its Google links working, and that a child cannot open `/home/<parent>/Desktop/family-linux-parent-guide.html` (the parent's home is 0700).
 38. Session 32: the guide is a snapshot at installation. Starter-site changes made later are not reflected in it. Decide whether `family-ctl` should rewrite it.
+39. Session 32: the guide and the late command use `~/Desktop`. In another installer language, Debian's xdg-user-dirs can name the desktop folder differently, and then Plasma would not show the guide. Read the folder from `xdg-user-dir DESKTOP` at first boot, or check the language case in a VM.
