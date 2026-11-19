@@ -877,6 +877,8 @@ Not changed: the review's point that the Desktop folder name can differ in anoth
 
 **Checks.** The workflow still parses as YAML (5 jobs). `pytest -q`: 358 passed, 5 skipped. The browser step is confirmed only by the next CI run on this PR.
 
+**Result.** Run `44508391190` on `51bf0eb`: all eight CI jobs passed, including the live job. The `Debian install` workflow passed on `51bf0eb` (run `44508390932`) and on `7aaa3f1` (run `44508113391`).
+
 **Note.** An earlier watch of this run reported success. That was wrong: the exit code it printed came from `tail`, not from `gh`. The run's own conclusion was `failure`.
 
 ## Open items, in priority order
