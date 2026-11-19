@@ -867,6 +867,18 @@ Not changed: the review gave PR #9's merge date as 2026-11-02. That is its creat
 Not changed: the review's point that the Desktop folder name can differ in another installer language (open item 39).
 - Not run: an ISO build or a VM install (open item 37). Not reviewed by Opus (CLAUDE.md). Not committed.
 
+## Session 32, CI on PR #10: the browser step could not find Chromium
+
+**Symptom.** The `CI` run on PR #10 (run `44507507508`) failed in the `Live apply and verify` job (job `135502838717`), at the step "Measure real browser behaviour for a child". The failing line was `FAIL: child cannot load an allowed site`. Every other job passed, including both Python test matrices and the Debian container.
+
+**Cause (from the job log).** The install step ran `sudo -E ... playwright install --with-deps chromium` with `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` set in the step's environment. This runner's sudo printed "sudo: preserving the entire environment is not supported, '-E' is ignored", so the variable was dropped. Chromium went to root's default cache. The child's run then looked in `/opt/ms-playwright`, and Playwright's launch failed with "Executable doesn't exist". The browser check never ran, so `RESULT allowed: loaded` was never printed and the grep failed. The change in this PR is not involved: the child's policy and DNS log show the gateway behaving as before (`example.com` allowed through the lookup, `tiktok.com` blocked by parent rule).
+
+**Fix.** `.github/workflows/ci.yml`, the install step: `sudo env PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright "$(which python)" -m playwright install ...`. This passes the path to the command directly, so it does not depend on `-E`. The other two `sudo -E env ...` lines (91 and 122) already pass their variables through `env` and are unaffected.
+
+**Checks.** The workflow still parses as YAML (5 jobs). `pytest -q`: 358 passed, 5 skipped. The browser step is confirmed only by the next CI run on this PR.
+
+**Note.** An earlier watch of this run reported success. That was wrong: the exit code it printed came from `tail`, not from `gh`. The run's own conclusion was `failure`.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).

@@ -283,7 +283,7 @@ jobs:
           sudo "$(which python)" -m family_linux.cli.family_ctl web block youtube.com --child cikid
           sleep 2
           sudo "$(which python)" -m pip install -q playwright
-          sudo -E "$(which python)" -m playwright install --with-deps chromium > /tmp/playwright-install.log 2>&1 \
+          sudo env PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright "$(which python)" -m playwright install --with-deps chromium > /tmp/playwright-install.log 2>&1 \
             || { tail -30 /tmp/playwright-install.log; exit 1; }
           sudo install -d -o cikid -g family-children /tmp/cikid-browser
           cat > /tmp/browser_check.py <<'PY'
