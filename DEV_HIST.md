@@ -800,6 +800,87 @@ Request from the user: act on the review's list, starting with item 1.
 
 **Tests.** 338 passed, 5 skipped.
 
+## Session 31: starter sites chosen per child, by age
+
+**Request.** Ask whether the installer can pre-fill child-friendly sites. Answer: yes. Each child gets the starter sites for their age, and the installer asks for each child separately (the parent's answer: per child, with age-appropriate lists).
+
+**Cause (why it was needed).** There was no choice. `WebFilterPolicy` put the same five sites (`*.wikipedia.org`, `*.khanacademy.org`, `*.scratch.mit.edu`, `*.nasa.gov`, `*.pbskids.org`) on every child, and nothing in the installer, `family-ctl user add` or the ISO build could change that.
+
+**Fix.**
+
+- `models.py`: `STARTER_SITES` holds one list per age tier. Young child: PBS Kids, Scratch, Khan Academy, NASA. Pre-teen: the old five. Teen: Wikipedia, Khan Academy, NASA, Britannica, Code.org. The names are plain (`pbskids.org`), so each covers the site and its subdomains; a `*.` entry would leave out the bare site. `WebFilterPolicy.for_tier(tier, starter_sites)` and `ChildAccount.create(..., starter_sites=True)` use them. Blocks are the same for every age.
+- `installer/wizard.py`: the child step shows the tier's list and asks "Pre-fill these starter sites for this child? (y/n)", default yes, once per child. The non-interactive path takes `--no-starter-sites USERNAME` (repeatable), and an unknown name is an error. The pre-installation summary shows each child's count of allowed sites.
+- `scripts/build-debian-iso.sh`: `NO_STARTER_SITES` (usernames separated by spaces) passes `--no-starter-sites` for each name.
+- `cli/family_ctl.py`: `user add --no-starter-sites`.
+- Children already on a system keep their current lists. The change applies when a child is added.
+
+**Found while writing the parent guide (fixed in the guide).** `docs/web-filtering-guide.md` said `example.com` covers only that exact address. The code (`DomainRules._matches`) says a plain name covers the site and all its subdomains, and only `*.example.com` leaves out the bare address. The guide now says so. Its `family-ctl web remove` example did not work as written: the command matches the exact text in the list, so the entry had to be typed with its `*.`. The starter lists now use plain names, so the example is `pbskids.org`; children set up before this change keep their `*.` names, and the guide says to remove those with the `*.`.
+
+**Review (Opus, medium effort, CLAUDE.md).** No serious defects. Changes made from it:
+
+1. The starter lists store plain names. A `*.` entry did not allow the bare site (`pbskids.org` went through the family filter, not the allow list), so "always allowed" was false for the bare name. A regression test now checks, for all three tiers, that each starter site and its `www.` name are allowed.
+2. The model comment said `*.example` covers the site and its subdomains. It does not; corrected.
+3. The wizard's starter prompt falls back to the pre-teen list for an unknown tier, as `for_tier` does.
+4. The parent guide's sentence about the blocked list was garbled. It now says the sites are always allowed, even if the family filter would block part of them.
+
+Not changed: the review gave PR #9's merge date as 2026-11-02. That is its creation date, which `gh pr list` shows. `gh pr view 9` gives the merge as 2026-11-09. The `getattr` in `family_ctl.py` stays, so hand-built argument objects keep working.
+
+**Checks.**
+
+- `pytest -q` from the repository root: 344 passed, 5 skipped (338 passed before, plus 6 new tests: two for the tier lists and the declined list in `test_models.py`, one for `user add` in `test_cli.py`, three for the installer in `test_installer.py`). After the review: 347 passed, 5 skipped (the bare-name test runs once per tier).
+- `bash -n scripts/build-debian-iso.sh`: parses.
+- Not run: an ISO build or a VM install. The change touches only the policy values and the installer's questions. The preseed and the first-boot apply read the policy unchanged.
+
+**Not done.** The Family Controls app's Add child dialog has no choice; children it adds get the starter sites for their tier. The lists are a first proposal for a parent to review (see the open items). No commit or push: the change is uncommitted on `debian-kde`.
+
+## Session 32: the parent's HTML guide on the desktop
+
+**Request.** Keep the bundled age lists (no online refresh). Provide an HTML guide in the parent's account, with a link to Google search results for finding age-appropriate sites.
+
+**What it does.** `src/family_linux/parent_guide.py` renders one HTML page: a table of each child (age bracket, the sites allowed at installation, a search link), a Google search link for each age bracket, the steps to allow or block a site (Family Controls and the terminal), Website requests, and a short checklist before allowing a site. The lists come from `STARTER_SITES`, so the guide cannot drift from what the installer offers. The page has no scripts, no stylesheet or image from the internet, and dark-mode colours. The only web links are the three search links.
+
+**Where it goes.**
+
+- At build time, `--export-preseed` writes `family-linux-parent-guide.html` beside the preseed (the same way as the late-command script). `scripts/build-debian-iso.sh` copies it into the payload.
+- The late command (step 5b) makes `/home/<parent>/Desktop` and installs the file there, owned by the parent. The parent's home is 0700, so children cannot read it.
+
+**Decisions.**
+
+- The guide is written at installation and not rewritten later, so it shows the sites each child started with. A later change in Family Controls is not reflected (open item 38).
+- The search text is "safe educational websites for children under 10" and similar. Google's results are not checked by Family Linux. The guide says so and asks the parent to look at a site first.
+- For an ISO install, children come from the build settings (`CHILD_SPECS`), so the guide reflects those.
+
+**Checks.**
+
+- `pytest -q`: 356 passed, 5 skipped (347 before, plus 9 new tests in `tests/test_parent_guide.py`: the lists per age, "none" for a declined child, one Google link per bracket, no scripts or outside loads, escaping of names, the late-command step, and the export writing the file).
+- `bash -n scripts/build-debian-iso.sh`: parses.
+- A sample page was rendered and read in full.
+
+**Review of PR #10 (Opus, medium effort).** Nothing serious: the late-command lines are quoted and ordered correctly, the parent's home stays 0700, and every value in the page is escaped. Fixed from it:
+
+1. **The guide named a button that does not exist.** It said "press Apply" (and the parent guide said "the tick"). The website boxes have an **Add** button (`kde_app/app.py`, `_rule_entry`), and Enter also works. Fixed in `parent_guide.py` and `docs/web-filtering-guide.md`.
+2. **`--no-starter-sites` was ignored in the interactive wizard**, which asks its own question for each child. It is now an error unless the run is `--non-interactive` or `--export-preseed`.
+3. **The guide showed a different name from the stored rule.** It stripped `*.`, so an older entry `*.pbskids.org` appeared as `pbskids.org`, which `web remove` does not match. The guide now shows each name as stored.
+4. **Weak tests.** The search-link check passed when no links were found; it now requires the links. A new check looks at each child's own table row. The late-command check now matches the whole `install` line and the order mkdir, install, chown.
+5. A comment on the `WebFilterPolicy` default (the pre-teen list), which only applies to a child loaded without a `web_filter` block.
+
+Not changed: the review's point that the Desktop folder name can differ in another installer language (open item 39).
+- Not run: an ISO build or a VM install (open item 37). Not reviewed by Opus (CLAUDE.md). Not committed.
+
+## Session 32, CI on PR #10: the browser step could not find Chromium
+
+**Symptom.** The `CI` run on PR #10 (run `44507507508`) failed in the `Live apply and verify` job (job `135502838717`), at the step "Measure real browser behaviour for a child". The failing line was `FAIL: child cannot load an allowed site`. Every other job passed, including both Python test matrices and the Debian container.
+
+**Cause (from the job log).** The install step ran `sudo -E ... playwright install --with-deps chromium` with `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` set in the step's environment. This runner's sudo printed "sudo: preserving the entire environment is not supported, '-E' is ignored", so the variable was dropped. Chromium went to root's default cache. The child's run then looked in `/opt/ms-playwright`, and Playwright's launch failed with "Executable doesn't exist". The browser check never ran, so `RESULT allowed: loaded` was never printed and the grep failed. The change in this PR is not involved: the child's policy and DNS log show the gateway behaving as before (`example.com` allowed through the lookup, `tiktok.com` blocked by parent rule).
+
+**Fix.** `.github/workflows/ci.yml`, the install step: `sudo env PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright "$(which python)" -m playwright install ...`. This passes the path to the command directly, so it does not depend on `-E`. The other two `sudo -E env ...` lines (91 and 122) already pass their variables through `env` and are unaffected.
+
+**Checks.** The workflow still parses as YAML (5 jobs). `pytest -q`: 358 passed, 5 skipped. The browser step is confirmed only by the next CI run on this PR.
+
+**Result.** Run `44508391190` on `51bf0eb`: all eight CI jobs passed, including the live job. The `Debian install` workflow passed on `51bf0eb` (run `44508390932`) and on `7aaa3f1` (run `44508113391`).
+
+**Note.** An earlier watch of this run reported success. That was wrong: the exit code it printed came from `tail`, not from `gh`. The run's own conclusion was `failure`.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
@@ -835,3 +916,9 @@ Request from the user: act on the review's list, starting with item 1.
 31. Session 30, partly done: the apply writes `/etc/logrotate.d/family-linux` (weekly, 52 kept). Still to do: read the audit log from the end instead of loading it whole.
 32. Session 30: check the clean sign-out of a child on a build with `--print-reply`, the D-Bus denials (whether dbus-daemon enforces them on Debian 13), SafeSearch answers in Firefox, and loopback isolation with two children, in a VM.
 33. Session 30: the ISOs in `dist/` predate Sessions 29 and 30. Rebuild them with your own passwords.
+34. Session 31: the starter lists in `models.py` (`STARTER_SITES`) are a first proposal. The parent should review them, in particular Wikipedia (not on the under-10 list), Britannica and Code.org (teen only). Changing a list means editing the code and the parent guide's table together.
+35. Session 31: the Family Controls app's Add child dialog has no starter-sites choice. Add a checkbox there if the parent wants one in the app as well as in the installer and `family-ctl`.
+36. Session 31: the change is committed and pushed as `c2ef96c` on `debian-kde`. It has no CI run until a pull request into `main` is open.
+37. Session 32: check in a VM that the guide appears on the parent's desktop, opens in the browser, has its Google links working, and that a child cannot open `/home/<parent>/Desktop/family-linux-parent-guide.html` (the parent's home is 0700).
+38. Session 32: the guide is a snapshot at installation. Starter-site changes made later are not reflected in it. Decide whether `family-ctl` should rewrite it.
+39. Session 32: the guide and the late command use `~/Desktop`. In another installer language, Debian's xdg-user-dirs can name the desktop folder differently, and then Plasma would not show the guide. Read the folder from `xdg-user-dir DESKTOP` at first boot, or check the language case in a VM.

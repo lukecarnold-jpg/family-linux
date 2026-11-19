@@ -6,6 +6,7 @@ Written for: parents with no IT background. You do not need to know how the inte
 
 - You need the **parent password**. It is the password you set when you installed Family Linux.
 - Web filtering works on **this computer only**, and only for **child accounts**. It cannot filter a phone, a tablet, or a child's own device.
+- A copy of this guide, with your children's details, is on your desktop: `family-linux-parent-guide.html`. Open it in any web browser. It does not connect to the internet by itself.
 - You can make changes in two ways:
   - **The Family Controls app** (recommended). Open it from the app menu, and enter your password when asked.
   - **The Terminal.** Type `sudo family-ctl ...` followed by the command, and enter your password when asked. The steps below show both.
@@ -13,10 +14,24 @@ Written for: parents with no IT background. You do not need to know how the inte
 ## What the filter does
 
 1. **Blocks sites from a list.** Adult and gambling sites, the Omegle and Chatroulette chat sites, and TikTok are blocked by default.
-2. **Allows sites you choose.** Some educational sites are always allowed by default: Wikipedia, Khan Academy, Scratch, NASA and PBS Kids.
+2. **Allows sites you choose.** Each child starts with a short list of educational sites that suits their age. See **Starter sites** below.
 3. **Filters search results.** SafeSearch is turned on for Google, Bing, DuckDuckGo and YouTube.
 4. **Asks you when a site is blocked.** If your child tries a blocked site, it appears in **Website requests** for you to decide.
 5. **Turns off some browser features** that could get around the filter, such as private (incognito) windows, developer tools and extra browser add-ons.
+
+## Starter sites
+
+When you set up a child account, the installer asks whether that child should start with the **starter sites** for their age. Answer each child separately. Press Enter to accept the list, or answer `n` to start with none.
+
+| Age | Starter sites |
+|-----|---------------|
+| Young child (under 10) | PBS Kids, Scratch, Khan Academy, NASA |
+| Pre-teen (10 to 13) | Wikipedia, Khan Academy, Scratch, NASA, PBS Kids |
+| Teen (14 and over) | Wikipedia, Khan Academy, NASA, Britannica, Code.org |
+
+These sites are always allowed for that child, even if the family filter would block part of them. You can change any child's list later, using Steps 2 to 4 below. To remove a starter site, use its name as the list shows it: `sudo family-ctl web remove pbskids.org --child kid`. Children set up before this change have some names with `*.` in front (for example `*.pbskids.org`). Remove those with the `*.` included.
+
+To add a child later without the starter sites, use `sudo family-ctl user add kid --no-starter-sites` (with the other options you need).
 
 ## Step 1: Check the current settings
 
@@ -40,7 +55,7 @@ This shows the DNS provider, SafeSearch, incognito and developer-tools settings,
 
 1. Open the child's page, then find **Websites**.
 2. In **Block a website**, type the site, for example `example.com`.
-3. Press the **Apply** button (the tick at the end of the box).
+3. Click the **Add** button next to the box, or press Enter.
 
 **In the Terminal:**
 
@@ -54,7 +69,7 @@ Replace `kid` with your child's username. Leave out `--child kid` to block the s
 
 Use this for a site that is blocked by default, or one you want to be sure is available.
 
-**In the app:** type the site into **Always allow a website** and press **Apply**.
+**In the app:** type the site into **Always allow a website**, click **Add** (or press Enter).
 
 **In the Terminal:**
 
@@ -64,10 +79,10 @@ sudo family-ctl web allow example.com --child kid
 
 ## Step 4: Cover all the pages on a site
 
-To cover every part of a site, put `*.` in front of the name:
+A name without `*.` covers the site and every part of it:
 
-- `*.example.com` covers `www.example.com`, `news.example.com`, and any other part of it.
-- `example.com` covers only that exact address.
+- `example.com` covers `example.com`, `www.example.com`, `news.example.com`, and any other part of it.
+- `*.example.com` covers only the parts under it, such as `www.example.com`. It does not cover `example.com` itself.
 
 ## Step 5: Answer a website request
 

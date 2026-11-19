@@ -30,6 +30,7 @@ from family_linux.models import (
     SecurityPolicy,
     AgeTier,
     DNSProvider,
+    STARTER_SITES,
     MIN_PASSWORD_LENGTH,
     MIN_PARENT_PASSWORD_LENGTH,
     parent_password_problems,
@@ -37,6 +38,7 @@ from family_linux.models import (
 from family_linux.timezones import detect_host_timezone, is_valid_timezone
 from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
 from family_linux.provisioner.preseed import DebianPreseedGenerator
+from family_linux.parent_guide import GUIDE_FILE_NAME, render_guide_html
 from family_linux.security.adapter import SystemAdapter
 
 
@@ -195,6 +197,8 @@ class InstallerWizard:
             tier_pick = self.prompt_choice("Select age preset tier", tier_options, tier_options[1])
             tier_val = tier_pick.split()[0]
 
+            starter = self.prompt_starter_sites(tier_val)
+
             password = self.secret_prompt(f"Child password (min {MIN_PASSWORD_LENGTH} characters)")
             while len(password) < MIN_PASSWORD_LENGTH:
                 print(f"Password too short: please enter at least {MIN_PASSWORD_LENGTH} characters.")
@@ -205,6 +209,7 @@ class InstallerWizard:
                 full_name=full_name,
                 age_tier=tier_val,
                 password=password,
+                starter_sites=starter,
             )
             errors = child.validate()
             if errors:
@@ -216,6 +221,14 @@ class InstallerWizard:
             more = self.prompt("Add another child account? (y/n)", "n").lower()
             if not more.startswith("y"):
                 break
+
+    def prompt_starter_sites(self, tier: str) -> bool:
+        """Asks whether this child starts with the age tier's starter sites. Each child is asked separately."""
+        sites = STARTER_SITES.get(tier, STARTER_SITES[AgeTier.PRE_TEEN.value])
+        print(f"Starter sites for this age: {', '.join(sites)}.")
+        print("They are allowed for this child at the start. You can change the list later with Family Controls.")
+        answer = self.prompt("Pre-fill these starter sites for this child? (y/n)", "y").lower()
+        return answer.startswith("y")
 
     def run_step_7_safety_defaults(self) -> None:
         print("\nStep 7: Safety Defaults")
@@ -271,7 +284,7 @@ class InstallerWizard:
         print(f"Parent Admin:     {policy.parent.username} ({policy.parent.full_name}) [sudo=YES]")
         print(f"Child Accounts:   {len(policy.children)}")
         for c in policy.children:
-            print(f"  - {c.username} ({c.full_name}): tier={c.age_tier}, limit={c.time_limits.daily_limit_minutes}m, curfew={c.time_limits.bedtime_weekday}")
+            print(f"  - {c.username} ({c.full_name}): tier={c.age_tier}, limit={c.time_limits.daily_limit_minutes}m, curfew={c.time_limits.bedtime_weekday}, allowed sites={len(c.web_filter.allowed_domains)}")
         print(f"Firewall:         Default Deny Incoming (UFW)")
         print(f"DNS Safety:       {self.dns_provider}")
         print(f"Desktop/Terminal: Children blocked from terminal, software stores, system settings")
@@ -351,11 +364,14 @@ def main() -> None:
     parser.add_argument("--parent-name", type=str, default="Family Administrator", help="Parent full name")
     parser.add_argument("--parent-pass", type=str, default=None, help=f"Parent password (required with --non-interactive; at least {MIN_PARENT_PASSWORD_LENGTH} characters with upper-case, lower-case, a number and a special character)")
     parser.add_argument("--child", action="append", help="Child account specification (format: username:fullname:tier:password, password required)")
+    parser.add_argument("--no-starter-sites", action="append", metavar="USERNAME", help="With --child: this child starts without the starter sites for the age tier (repeat for each child)")
     parser.add_argument("--export-preseed", type=str, help="Export the Debian Installer preseed file to this path, and the late-command script beside it, then exit")
     parser.add_argument("--poweroff-after-firstboot", action="store_true", help="With --export-preseed: power off after the first-boot apply (appliance builds only)")
     parser.add_argument("--unattended-disk", action="store_true", help="With --export-preseed: erase the disk without the installer's confirmation screen (automated builds only)")
     parser.add_argument("--export-policy", type=str, help="With --export-preseed: also write the policy file (no passwords) for first-boot provisioning")
     args = parser.parse_args()
+    if args.no_starter_sites and not (args.non_interactive or args.export_preseed):
+        sys.exit("Error: --no-starter-sites needs --non-interactive or --export-preseed.")
 
     wizard = InstallerWizard(dry_run=args.dry_run, interactive=not args.non_interactive)
     wizard.language = args.language
@@ -378,6 +394,7 @@ def main() -> None:
             role="local_admin",
             sudo_access=True,
         )
+        no_starter = set(args.no_starter_sites or [])
         if args.child:
             for c_spec in args.child:
                 # maxsplit=3 keeps any ':' inside the password.
@@ -387,7 +404,10 @@ def main() -> None:
                 u = parts[0]
                 fn = parts[1] or u.capitalize()
                 t = parts[2] or AgeTier.PRE_TEEN.value
-                wizard.children.append(ChildAccount.create(u, fn, t, parts[3]))
+                wizard.children.append(ChildAccount.create(u, fn, t, parts[3], starter_sites=u not in no_starter))
+        unknown = sorted(no_starter - {c.username for c in wizard.children})
+        if unknown:
+            sys.exit(f"Error: --no-starter-sites names no child given with --child: {', '.join(unknown)}.")
 
         policy = wizard.run_step_9_validation()
 
@@ -406,7 +426,10 @@ def main() -> None:
             late_path = out_path.parent / "late-command.sh"
             with open(late_path, "w", encoding="utf-8") as f:
                 f.write(gen.generate_late_script(poweroff_after_firstboot=args.poweroff_after_firstboot))
-            print(f"Exported Debian preseed to {out_path} and the late-command script to {late_path}")
+            guide_path = out_path.parent / GUIDE_FILE_NAME
+            with open(guide_path, "w", encoding="utf-8") as f:
+                f.write(render_guide_html(policy))
+            print(f"Exported Debian preseed to {out_path}, the late-command script to {late_path} and the parent guide to {guide_path}")
             if args.export_policy:
                 from family_linux.config import PolicyConfigManager
                 saved = PolicyConfigManager(Path(args.export_policy)).save_policy(policy, reason="ISO build")

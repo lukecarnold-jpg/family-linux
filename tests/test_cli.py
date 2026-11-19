@@ -93,6 +93,17 @@ def test_cli_web_block_and_allow(test_ctl: FamilyCtl):
     assert "distraction.net" not in alice.web_filter.blocked_domains
 
 
+def test_cli_user_add_uses_starter_sites_unless_declined(test_ctl: FamilyCtl):
+    base = dict(tier="teen", name="Bo", password="ChildSecret12", password_stdin=False)
+    test_ctl.cmd_user(argparse.Namespace(user_action="add", username="bobby", no_starter_sites=False, **base))
+    test_ctl.cmd_user(argparse.Namespace(user_action="add", username="cyrus", no_starter_sites=True, **base))
+
+    policy = test_ctl.config_manager.load_policy()
+    by_name = {c.username: c for c in policy.children}
+    assert "britannica.com" in by_name["bobby"].web_filter.allowed_domains
+    assert by_name["cyrus"].web_filter.allowed_domains == []
+
+
 def test_cli_time_set(test_ctl: FamilyCtl):
     args_time = argparse.Namespace(
         time_action="set",

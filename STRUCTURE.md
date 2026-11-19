@@ -75,7 +75,7 @@ Generated folders such as `__pycache__/`, `build/` and `dist/` are ignored by `.
 | Module | Role | Key names |
 |--------|------|-----------|
 | `__init__.py` | Package version | `__version__` |
-| `models.py` | Data model and policy rules: accounts, age tiers, time limits, web filter, app policy, security baseline. Holds the constants for DNS servers, default app lists (Debian and KDE desktop ids), always-blocked commands and terminals, the password rules (child minimum length; parent rules), the 24-hour time check used to validate bedtimes, and the exact approved-app match (`approved_entries_matching`, with `APP_FAMILIES` such as LibreOffice). Passwords are held in memory only and are excluded from `to_dict()`. | `FamilyPolicy`, `ParentAccount`, `ChildAccount`, `SecurityPolicy`, `AgeTier`, `DNSProvider`, `MIN_PASSWORD_LENGTH`, `MIN_PARENT_PASSWORD_LENGTH`, `parent_password_problems`, `DEFAULT_APPROVED_APPS`, `ALWAYS_BLOCKED_COMMANDS`, `CLOCK`, `approved_entries_matching`, `APP_FAMILIES` |
+| `models.py` | Data model and policy rules: accounts, age tiers, time limits, web filter, app policy, security baseline. Holds the constants for DNS servers, default app lists (Debian and KDE desktop ids), always-blocked commands and terminals, the starter allowed sites for each age tier, the password rules (child minimum length; parent rules), the 24-hour time check used to validate bedtimes, and the exact approved-app match (`approved_entries_matching`, with `APP_FAMILIES` such as LibreOffice). Passwords are held in memory only and are excluded from `to_dict()`. | `FamilyPolicy`, `ParentAccount`, `ChildAccount`, `SecurityPolicy`, `AgeTier`, `DNSProvider`, `WebFilterPolicy.for_tier`, `STARTER_SITES`, `MIN_PASSWORD_LENGTH`, `MIN_PARENT_PASSWORD_LENGTH`, `parent_password_problems`, `DEFAULT_APPROVED_APPS`, `ALWAYS_BLOCKED_COMMANDS`, `CLOCK`, `approved_entries_matching`, `APP_FAMILIES` |
 | `timezones.py` | Time zone names for setup: validation (IANA names only) and the host's zone as the default | `is_valid_timezone`, `detect_host_timezone` |
 | `config.py` | Load, save (atomic, `0600`), back up, and restore the policy YAML | `PolicyConfigManager` |
 | `audit/logger.py` | Append-only JSON-lines audit log with read and filter; the logrotate file the apply writes (`updates` layer) | `AuditLogger`, `AuditRecord`, `render_logrotate` |
@@ -93,6 +93,7 @@ Generated folders such as `__pycache__/`, `build/` and `dist/` are ignored by `.
 | `screentime/daemon.py` | Polls signed-in users, counts time only for active unlocked sessions, sends warnings into the child's session (`runuser` and the session bus), asks Plasma to sign the child out at a limit or bedtime and forces it a cycle later (restarting the sign-in screen when nobody else is signed in). Each child is checked separately | `ScreenTimeDaemon`, `PLASMA_LOGOUT_COMMANDS` |
 | `screentime/service.py` | Writes, enables and restarts `family-policyd.service` (the `screentime` layer) | `ScreenTimeService`, `render_service` |
 | `screentime/gate.py` | Sign-in check run by `pam_exec` in SDDM's account stack: refuses a child at bedtime, after the day's limit, or when turned off; fails closed | `check`, `pam_main` |
+| `parent_guide.py` | The parent's HTML guide: each child's age bracket, the sites allowed at installation, a Google search link per age bracket, and how to allow or block a site. Written at build time (`--export-preseed`) and installed on the parent's desktop by the late command. Scripts and internet loads are never included; every value is escaped | `render_guide_html`, `search_url`, `bracket_for`, `BRACKETS`, `GUIDE_FILE_NAME` |
 
 ### Security layer (`security/`)
 
@@ -148,6 +149,7 @@ Paths are chosen at runtime. The first set is used when running as root or when 
 | Wallpaper image | `/usr/share/backgrounds/family-linux/wallpaper.<extension>` | (none) |
 | Wallpaper step (run at login) | `/usr/libexec/family-linux/family-linux-set-wallpaper`, `/etc/xdg/autostart/family-linux-wallpaper.desktop` | (none) |
 | Wallpaper marker (one per account) | (none) | `~/.local/state/family-linux/wallpaper-set` |
+| Parent guide (HTML, on the parent's desktop, owned by the parent) | `/home/<parent>/Desktop/family-linux-parent-guide.html` | (none) |
 | AppArmor profile | `/etc/apparmor.d/family-linux-child` | (none) |
 | DNS drop-in | `/etc/systemd/resolved.conf.d/family-linux-dns.conf` | (none) |
 | NetworkManager settings (managed interfaces, systemd-resolved DNS) | `/etc/NetworkManager/conf.d/family-linux-network.conf`, `/etc/NetworkManager/conf.d/family-linux-dns.conf` | (none) |

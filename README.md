@@ -91,6 +91,8 @@ PARENT_PASS='your-own-14+-char-Password!' CHILD_SPECS='kid:Kid:pre_teen:child-pa
 # -> dist/family-linux-debian-stable-arm64.iso (or -amd64.iso); OUTPUT_DIR=... writes it elsewhere
 ```
 
+`NO_STARTER_SITES='kid'` (usernames separated by spaces) starts that child without the starter sites for their age. Each child in `CHILD_SPECS` gets them unless named there.
+
 Boot the ISO and choose **Install** (or Graphical install) at the boot menu. The Debian installer opens with the Family Linux answers filled in: the accounts, the packages, the time zone and the disk. It still asks about anything those answers do not cover. **The install erases the first disk the installer finds** (or the disk named in `TARGET_DISK`), so boot the ISO only on a computer you mean to set up.
 
 The installer asks before it writes to the disk. On amd64 the BIOS menu works the same way as the UEFI menu.
@@ -172,6 +174,8 @@ Implemented (prototype level):
 
 - Policy model with validation, saved with backups to one YAML file
 - Parent CLI for child accounts, app approvals, screen-time limits, website block and allow lists, audit log, backups, and baseline verification
+- Starter allowed sites by age tier, chosen for each child at install time (the installer asks per child; `family-ctl user add --no-starter-sites` and `NO_STARTER_SITES` in the ISO build decline them). See `docs/web-filtering-guide.md`
+- A parent guide on the parent's desktop (`family-linux-parent-guide.html`): each child's age bracket, the sites they started with, a Google search link for each age bracket, and how to allow or block a site. It has no scripts and loads nothing from the internet; only the search links open a web page when clicked
 - Family Controls, the parent's KDE app (PyQt6): children, screen time, websites, apps, website requests, add child
 - Audit log with weekly rotation
 - Screen-time tracker, the `family-policyd` service (installed and started by the apply) and the sign-in hours check
@@ -196,13 +200,15 @@ Not yet implemented, or not validated:
 - Installation to real hardware.
 - amd64 install: the ISO is built and checked in CI. A full install of the automated amd64 ISO passed in the `Debian install` workflow (QEMU) on PR #8. No interactive amd64 install has been done.
 - Anything that depends on the child's desktop session is only as tested as the VirtualBox run says.
+- The parent guide on the desktop is checked by unit tests only. A VM install has not yet confirmed that the file appears on the parent's desktop, opens in the browser, and cannot be opened by a child (DEV_HIST open item 37).
 - Terminal shortcut (Ctrl+Alt+T) for child accounts is expected to be blocked by hiding Konsole; not yet confirmed.
 - CI: the `debian` job runs the tests and checks the package list in a Debian 13 container. The other Linux jobs run on Ubuntu runners.
 
-Repository status (checked with `gh` on 2026-11-09):
+Repository status (checked with `gh` and `git fetch` on 2026-11-19):
 
-- Default branch: `main`. It includes PR #7 (`debian-kde`, the Debian rebuild from Session 25) and PR #8 (`debian-kde`, merged as `cdd2ef7`: interactive ISO, appliance fixes, Sessions 26 to 28). CI passed on that merge. CI runs on pushes to `main` and on pull requests into `main`.
-- Working branch: `debian-kde`. Its commits that are not on `main` are the Session 29 browser changes (`33e9caa`), two status updates, the Session 30 review fixes (`69e8128`), two CI fixes (`f144eea`, `577041d`; see DEV_HIST) and this status update. They are in pull request [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) into `main` (open). On `577041d` every CI job passed (run 42562966646), including the live apply and verify with the new checks, and the `Debian install` workflow (QEMU install of the amd64 ISO) passed (run 42562966655).
+- Default branch: `main` at `64694b7`. It includes PR #7 (`debian-kde`, the Debian rebuild from Session 25), PR #8 (`debian-kde`, merged as `cdd2ef7`: interactive ISO, appliance fixes, Sessions 26 to 28) and PR [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) (`debian-kde`, merged 2026-11-09: other browsers, the Session 30 review fixes and the CI fixes). CI passed on the PR #9 merge (run 42564767909). The scheduled `Debian install` workflow on `main` passed on 2026-11-16 (run 43848500874). CI runs on pushes to `main` and on pull requests into `main`.
+- Open pull requests: [#10](https://github.com/lukecarnold-jpg/family-linux/pull/10) (`debian-kde` into `main`): starter sites chosen per child by age (Session 31), the parent guide on the parent's desktop (Session 32), a fix from the review of the PR, and a CI fix (`51bf0eb`, Session 32 in DEV_HIST). On `51bf0eb` every CI job passed (run 44508391190), including the browser step that failed on `dbb0669` (run 44507507508), and the `Debian install` workflow passed (run 44508390932).
+- Working branch: `debian-kde`. Its four commits that are not on `main` are `c2ef96c`, `dbb0669`, `7aaa3f1` and `51bf0eb`, all pushed and all in PR #10.
 
 Design documents:
 
