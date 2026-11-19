@@ -19,6 +19,7 @@ import shlex
 from typing import List, Optional
 
 from family_linux.models import FamilyPolicy
+from family_linux.parent_guide import GUIDE_FILE_NAME
 from family_linux.provisioner.sha512crypt import sha512_crypt
 
 # Paths on the ISO (and in the installer, where the CD is mounted at /cdrom).
@@ -287,6 +288,14 @@ class DebianPreseedGenerator:
         out.append(f'for image in $PAYLOAD/{WALLPAPER_GLOB}; do [ -f "$image" ] && install -m 644 "$image" $T/usr/share/backgrounds/family-linux/; done')
         out.append(f"install -m 755 $PAYLOAD/{SET_WALLPAPER_SCRIPT} $T/usr/libexec/family-linux/{SET_WALLPAPER_SCRIPT}")
         out.append(f"install -m 644 $PAYLOAD/family-linux-wallpaper.desktop $T/etc/xdg/autostart/family-linux-wallpaper.desktop")
+        out.append("")
+
+        # The parent guide goes on the parent's desktop. The parent's home is private (0700), so no child can read it.
+        desktop = f"/home/{parent.username}/Desktop"
+        out.append("# 5b. Parent guide: an HTML page on the parent's desktop (see parent_guide.py)")
+        out.append(f"in-target mkdir -p {_quote(desktop)}")
+        out.append(f'install -m 644 $PAYLOAD/{GUIDE_FILE_NAME} "$T"{_quote(desktop + "/" + GUIDE_FILE_NAME)}')
+        out.append(f"in-target chown -R {_quote(parent.username)}:{_quote(parent.username)} {_quote(desktop)}")
         out.append("")
 
         out.append("# 6. Networking: NetworkManager manages every connection and uses systemd-resolved for DNS,")

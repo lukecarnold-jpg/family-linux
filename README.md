@@ -175,6 +175,7 @@ Implemented (prototype level):
 - Policy model with validation, saved with backups to one YAML file
 - Parent CLI for child accounts, app approvals, screen-time limits, website block and allow lists, audit log, backups, and baseline verification
 - Starter allowed sites by age tier, chosen for each child at install time (the installer asks per child; `family-ctl user add --no-starter-sites` and `NO_STARTER_SITES` in the ISO build decline them). See `docs/web-filtering-guide.md`
+- A parent guide on the parent's desktop (`family-linux-parent-guide.html`): each child's age bracket, the sites they started with, a Google search link for each age bracket, and how to allow or block a site. It has no scripts and loads nothing from the internet; only the search links open a web page when clicked
 - Family Controls, the parent's KDE app (PyQt6): children, screen time, websites, apps, website requests, add child
 - Audit log with weekly rotation
 - Screen-time tracker, the `family-policyd` service (installed and started by the apply) and the sign-in hours check
@@ -199,14 +200,15 @@ Not yet implemented, or not validated:
 - Installation to real hardware.
 - amd64 install: the ISO is built and checked in CI. A full install of the automated amd64 ISO passed in the `Debian install` workflow (QEMU) on PR #8. No interactive amd64 install has been done.
 - Anything that depends on the child's desktop session is only as tested as the VirtualBox run says.
+- The parent guide on the desktop is checked by unit tests only. A VM install has not yet confirmed that the file appears on the parent's desktop, opens in the browser, and cannot be opened by a child (DEV_HIST open item 37).
 - Terminal shortcut (Ctrl+Alt+T) for child accounts is expected to be blocked by hiding Konsole; not yet confirmed.
 - CI: the `debian` job runs the tests and checks the package list in a Debian 13 container. The other Linux jobs run on Ubuntu runners.
 
-Repository status (checked with `gh` and `git fetch` on 2026-11-17):
+Repository status (checked with `gh` and `git fetch` on 2026-11-19):
 
 - Default branch: `main` at `64694b7`. It includes PR #7 (`debian-kde`, the Debian rebuild from Session 25), PR #8 (`debian-kde`, merged as `cdd2ef7`: interactive ISO, appliance fixes, Sessions 26 to 28) and PR [#9](https://github.com/lukecarnold-jpg/family-linux/pull/9) (`debian-kde`, merged 2026-11-09: other browsers, the Session 30 review fixes and the CI fixes). CI passed on the PR #9 merge (run 42564767909). The scheduled `Debian install` workflow on `main` passed on 2026-11-16 (run 43848500874). CI runs on pushes to `main` and on pull requests into `main`.
 - Open pull requests: none.
-- Working branch: `debian-kde`. It has no commits that are not on `main`. The starter-sites change (per-child choice, see Session 31 in DEV_HIST) is uncommitted in the working tree. It has no CI run until it is committed, pushed and opened as a pull request into `main`.
+- Working branch: `debian-kde`. Its one commit that is not on `main` is `c2ef96c` (starter sites chosen per child, Session 31 in DEV_HIST), pushed. It has no CI run until a pull request into `main` is open. The parent guide (Session 32) is uncommitted in the working tree.
 
 Design documents:
 

@@ -38,6 +38,7 @@ from family_linux.models import (
 from family_linux.timezones import detect_host_timezone, is_valid_timezone
 from family_linux.provisioner.system import ProvisioningError, SystemProvisioner
 from family_linux.provisioner.preseed import DebianPreseedGenerator
+from family_linux.parent_guide import GUIDE_FILE_NAME, render_guide_html
 from family_linux.security.adapter import SystemAdapter
 
 
@@ -423,7 +424,10 @@ def main() -> None:
             late_path = out_path.parent / "late-command.sh"
             with open(late_path, "w", encoding="utf-8") as f:
                 f.write(gen.generate_late_script(poweroff_after_firstboot=args.poweroff_after_firstboot))
-            print(f"Exported Debian preseed to {out_path} and the late-command script to {late_path}")
+            guide_path = out_path.parent / GUIDE_FILE_NAME
+            with open(guide_path, "w", encoding="utf-8") as f:
+                f.write(render_guide_html(policy))
+            print(f"Exported Debian preseed to {out_path}, the late-command script to {late_path} and the parent guide to {guide_path}")
             if args.export_policy:
                 from family_linux.config import PolicyConfigManager
                 saved = PolicyConfigManager(Path(args.export_policy)).save_policy(policy, reason="ISO build")

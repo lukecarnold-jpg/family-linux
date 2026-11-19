@@ -833,6 +833,30 @@ Not changed: the review gave PR #9's merge date as 2026-11-02. That is its creat
 
 **Not done.** The Family Controls app's Add child dialog has no choice; children it adds get the starter sites for their tier. The lists are a first proposal for a parent to review (see the open items). No commit or push: the change is uncommitted on `debian-kde`.
 
+## Session 32: the parent's HTML guide on the desktop
+
+**Request.** Keep the bundled age lists (no online refresh). Provide an HTML guide in the parent's account, with a link to Google search results for finding age-appropriate sites.
+
+**What it does.** `src/family_linux/parent_guide.py` renders one HTML page: a table of each child (age bracket, the sites allowed at installation, a search link), a Google search link for each age bracket, the steps to allow or block a site (Family Controls and the terminal), Website requests, and a short checklist before allowing a site. The lists come from `STARTER_SITES`, so the guide cannot drift from what the installer offers. The page has no scripts, no stylesheet or image from the internet, and dark-mode colours. The only web links are the three search links.
+
+**Where it goes.**
+
+- At build time, `--export-preseed` writes `family-linux-parent-guide.html` beside the preseed (the same way as the late-command script). `scripts/build-debian-iso.sh` copies it into the payload.
+- The late command (step 5b) makes `/home/<parent>/Desktop` and installs the file there, owned by the parent. The parent's home is 0700, so children cannot read it.
+
+**Decisions.**
+
+- The guide is written at installation and not rewritten later, so it shows the sites each child started with. A later change in Family Controls is not reflected (open item 38).
+- The search text is "safe educational websites for children under 10" and similar. Google's results are not checked by Family Linux. The guide says so and asks the parent to look at a site first.
+- For an ISO install, children come from the build settings (`CHILD_SPECS`), so the guide reflects those.
+
+**Checks.**
+
+- `pytest -q`: 356 passed, 5 skipped (347 before, plus 9 new tests in `tests/test_parent_guide.py`: the lists per age, "none" for a declined child, one Google link per bracket, no scripts or outside loads, escaping of names, the late-command step, and the export writing the file).
+- `bash -n scripts/build-debian-iso.sh`: parses.
+- A sample page was rendered and read in full.
+- Not run: an ISO build or a VM install (open item 37). Not reviewed by Opus (CLAUDE.md). Not committed.
+
 ## Open items, in priority order
 
 1. Watch for the intermittent `cloudflare.com` failure in later runs; the repeat loads in CI will show it if it returns (Session 12).
@@ -870,4 +894,6 @@ Not changed: the review gave PR #9's merge date as 2026-11-02. That is its creat
 33. Session 30: the ISOs in `dist/` predate Sessions 29 and 30. Rebuild them with your own passwords.
 34. Session 31: the starter lists in `models.py` (`STARTER_SITES`) are a first proposal. The parent should review them, in particular Wikipedia (not on the under-10 list), Britannica and Code.org (teen only). Changing a list means editing the code and the parent guide's table together.
 35. Session 31: the Family Controls app's Add child dialog has no starter-sites choice. Add a checkbox there if the parent wants one in the app as well as in the installer and `family-ctl`.
-36. Session 31: the change is uncommitted on `debian-kde`. Commit and push it when asked; it has no CI run until a pull request into `main` is open. Opus review (CLAUDE.md) has not been run on it.
+36. Session 31: the change is committed and pushed as `c2ef96c` on `debian-kde`. It has no CI run until a pull request into `main` is open.
+37. Session 32: check in a VM that the guide appears on the parent's desktop, opens in the browser, has its Google links working, and that a child cannot open `/home/<parent>/Desktop/family-linux-parent-guide.html` (the parent's home is 0700).
+38. Session 32: the guide is a snapshot at installation. Starter-site changes made later are not reflected in it. Decide whether `family-ctl` should rewrite it.

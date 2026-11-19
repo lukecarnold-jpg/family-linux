@@ -6,6 +6,7 @@ Written for: parents with no IT background. You do not need to know how the inte
 
 - You need the **parent password**. It is the password you set when you installed Family Linux.
 - Web filtering works on **this computer only**, and only for **child accounts**. It cannot filter a phone, a tablet, or a child's own device.
+- A copy of this guide, with your children's details, is on your desktop: `family-linux-parent-guide.html`. Open it in any web browser. It does not connect to the internet by itself.
 - You can make changes in two ways:
   - **The Family Controls app** (recommended). Open it from the app menu, and enter your password when asked.
   - **The Terminal.** Type `sudo family-ctl ...` followed by the command, and enter your password when asked. The steps below show both.

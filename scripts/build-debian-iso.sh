@@ -143,6 +143,7 @@ PYTHONPATH="${PROJECT_ROOT}/src" "$PYTHON" -m family_linux.installer.wizard \
     --export-policy "$EXPORT/policy.yaml"
 cp "$EXPORT/late-command.sh" "$PAYLOAD/family-linux/late-command.sh"
 cp "$EXPORT/policy.yaml" "$PAYLOAD/family-linux/policy.yaml"
+cp "$EXPORT/family-linux-parent-guide.html" "$PAYLOAD/family-linux/family-linux-parent-guide.html"
 cp "${PROJECT_ROOT}/config/systemd/family-linux-firstboot.service" "$PAYLOAD/family-linux/"
 cp "${PROJECT_ROOT}/config/bin/family-ctl" "$PAYLOAD/family-linux/family-ctl"
 cp "${PROJECT_ROOT}/config/bin/family-linux-parent" "$PAYLOAD/family-linux/family-linux-parent"

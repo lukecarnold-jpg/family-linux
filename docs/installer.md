@@ -37,6 +37,10 @@ Each child is offered a starter list of allowed sites for their age tier (`START
 
 The result is saved in the policy file, which the first-boot apply reads.
 
+## Parent guide
+
+The export also writes a parent guide, `family-linux-parent-guide.html` (`src/family_linux/parent_guide.py`). The late command puts it on the parent's desktop, where only the parent can read it. It shows each child's age bracket, the sites they started with, a Google search for each age bracket, and how to allow or block a site. It is written once at installation and does not change when settings change later.
+
 ## Recommended mode behavior
 
 Recommended mode should:
